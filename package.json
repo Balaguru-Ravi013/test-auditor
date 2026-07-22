@@ -1,0 +1,37 @@
+{
+  "name": "test-auditor",
+  "version": "1.0.0",
+  "description": "Deep Jest/Next.js unit-test quality auditor: coverage, static strategies, and an interactive report viewer",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "test-auditor": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json --outDir dist && chmod +x dist/cli.js",
+    "start": "node dist/cli.js",
+    "dev": "ts-node src/cli.ts",
+    "viewer": "npx --yes serve viewer -p 4173"
+  },
+  "keywords": [],
+  "author": "",
+  "files": [
+    "dist",
+    "viewer",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@babel/parser": "^8.0.4",
+    "@babel/traverse": "^8.0.4",
+    "chalk": "^5.6.2",
+    "commander": "^15.0.0",
+    "execa": "^10.0.0",
+    "glob": "^13.0.6"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^7.0.2"
+  }
+}

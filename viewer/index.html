@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="Interactive viewer for test-auditor Markdown reports"
+    />
+    <title>test-auditor · Report Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <div class="bg" aria-hidden="true"></div>
+
+    <header class="top">
+      <div class="top__brand">
+        <span class="top__mark" aria-hidden="true"></span>
+        <div>
+          <p class="top__eyebrow">test-auditor</p>
+          <h1 class="top__title">Report Viewer</h1>
+        </div>
+      </div>
+      <div class="top__actions">
+        <label class="btn btn--ghost file-btn">
+          <input
+            id="file-input"
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            hidden
+          />
+          Open report
+        </label>
+        <button type="button" id="btn-expand" class="btn btn--ghost" hidden>
+          Expand all
+        </button>
+        <button type="button" id="btn-collapse" class="btn btn--ghost" hidden>
+          Collapse all
+        </button>
+      </div>
+    </header>
+
+    <main id="main" class="main">
+      <section id="dropzone" class="dropzone" tabindex="0">
+        <div class="dropzone__inner">
+          <p class="dropzone__kicker">Drop your audit report</p>
+          <h2 class="dropzone__title">audit-report.md</h2>
+          <p class="dropzone__hint">
+            Drag &amp; drop the Markdown file here, or use
+            <strong>Open report</strong>. Works offline in any modern browser —
+            no server required.
+          </p>
+          <p id="dropzone-error" class="dropzone__error" role="alert" hidden></p>
+        </div>
+      </section>
+
+      <section id="report" class="report" hidden>
+        <div class="report__meta">
+          <p id="report-generated" class="report__generated"></p>
+          <p id="report-filename" class="report__filename"></p>
+        </div>
+
+        <div id="quality-hero" class="quality-hero" hidden></div>
+
+        <div id="summary-strip" class="summary-strip" aria-label="Summary metrics"></div>
+
+        <section id="strategies" class="strategies" hidden aria-label="Audit strategies"></section>
+
+        <div id="accordions" class="accordions"></div>
+      </section>
+    </main>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>
