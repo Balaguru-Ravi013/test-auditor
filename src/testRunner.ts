@@ -4,6 +4,13 @@ import os from 'os';
 import path from 'path';
 import { execa } from 'execa';
 
+export interface TestCaseRow {
+  file: string;
+  name: string;
+  /** Jest status: passed | failed | pending | todo | skipped */
+  status: string;
+}
+
 export interface TestResult {
   testFilePath: string;
   numPassingTests: number;
@@ -20,6 +27,8 @@ export interface RunSummary {
   numPendingTests: number;
   numTodoTests: number;
   testResults: TestResult[];
+  /** Flat list of individual tests for report drill-down. */
+  testCases: TestCaseRow[];
   /** Istanbul coverage map from Jest --json --coverage (when present). */
   coverageMap?: Record<string, unknown> | null;
 }
@@ -35,10 +44,25 @@ function getAssertions(suite: Record<string, unknown>): Array<Record<string, unk
   return [];
 }
 
-function mapSuiteResult(suite: Record<string, unknown>): TestResult {
+function assertionName(assertion: Record<string, unknown>): string {
+  if (typeof assertion.fullName === 'string' && assertion.fullName.trim()) {
+    return assertion.fullName.trim();
+  }
+  const ancestors = Array.isArray(assertion.ancestorTitles)
+    ? (assertion.ancestorTitles as unknown[]).map(String)
+    : [];
+  const title = String(assertion.title ?? assertion.name ?? 'unnamed');
+  return [...ancestors, title].filter(Boolean).join(' › ');
+}
+
+function mapSuiteResult(suite: Record<string, unknown>): {
+  result: TestResult;
+  cases: TestCaseRow[];
+} {
   const assertions = getAssertions(suite);
   const failed = assertions.filter((t) => t.status === 'failed');
   const passed = assertions.filter((t) => t.status === 'passed');
+  const filePath = String(suite.testFilePath ?? suite.name ?? '');
 
   const numPassingTests =
     typeof suite.numPassingTests === 'number'
@@ -50,14 +74,23 @@ function mapSuiteResult(suite: Record<string, unknown>): TestResult {
       ? suite.numFailingTests
       : failed.length;
 
+  const cases: TestCaseRow[] = assertions.map((t) => ({
+    file: filePath,
+    name: assertionName(t),
+    status: String(t.status ?? 'unknown').toLowerCase(),
+  }));
+
   return {
-    testFilePath: String(suite.testFilePath ?? suite.name ?? ''),
-    numPassingTests,
-    numFailingTests,
-    duration: Number(suite.endTime ?? 0) - Number(suite.startTime ?? 0),
-    failureMessages: failed.flatMap((t) =>
-      Array.isArray(t.failureMessages) ? (t.failureMessages as string[]) : []
-    ),
+    result: {
+      testFilePath: filePath,
+      numPassingTests,
+      numFailingTests,
+      duration: Number(suite.endTime ?? 0) - Number(suite.startTime ?? 0),
+      failureMessages: failed.flatMap((t) =>
+        Array.isArray(t.failureMessages) ? (t.failureMessages as string[]) : []
+      ),
+    },
+    cases,
   };
 }
 
@@ -224,6 +257,10 @@ export async function runJestTests(
         ? (parsed.coverageMap as Record<string, unknown>)
         : null;
 
+    const mapped = suites.map(mapSuiteResult);
+    const testResults = mapped.map((m) => m.result);
+    const testCases = mapped.flatMap((m) => m.cases);
+
     return {
       success: Boolean(parsed.success),
       numTotalTests: Number(parsed.numTotalTests ?? 0),
@@ -231,7 +268,8 @@ export async function runJestTests(
       numFailedTests: Number(parsed.numFailedTests ?? 0),
       numPendingTests: Number(parsed.numPendingTests ?? 0),
       numTodoTests: Number(parsed.numTodoTests ?? 0),
-      testResults: suites.map(mapSuiteResult),
+      testResults,
+      testCases,
       coverageMap,
     };
   } catch (err) {

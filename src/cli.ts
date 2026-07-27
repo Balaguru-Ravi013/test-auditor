@@ -121,6 +121,7 @@ program
         numPendingTests: 0,
         numTodoTests: 0,
         testResults: [],
+        testCases: [],
         coverageMap: null,
       };
     }

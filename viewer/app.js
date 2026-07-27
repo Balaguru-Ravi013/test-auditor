@@ -1,1050 +1,1445 @@
-(function () {
-  "use strict";
+import {
+  PAGE_SIZE,
+  METRIC_MODAL,
+  escapeHtml,
+  shortPath,
+  strategyMeta,
+  severityPill,
+  statusPill,
+  statusMatchesFilter,
+  metricTone,
+  infoButton,
+  metricCard,
+  covClass,
+  formatGenerated,
+} from "./helpers.js";
+import { parseReport } from "./parse.js";
 
-  var PAGE_SIZE = 50;
+var state = {
+  report: null,
+  filename: "",
+  issuesPage: 0,
+  coveragePage: 0,
+  issueQuery: "",
+  issueSeverity: "all",
+  issueStrategy: "all",
+  coverageQuery: "",
+  coverageSort: "lines-asc",
+  modal: null,
+};
 
-  var state = {
-    report: null,
-    filename: "",
-    issuesPage: 0,
-    coveragePage: 0,
-    issueQuery: "",
-    issueSeverity: "all",
-    coverageQuery: "",
-    coverageSort: "lines-asc",
-  };
+var el = {
+  dropzone: document.getElementById("dropzone"),
+  dropError: document.getElementById("dropzone-error"),
+  fileInput: document.getElementById("file-input"),
+  report: document.getElementById("report"),
+  generated: document.getElementById("report-generated"),
+  filename: document.getElementById("report-filename"),
+  qualityHero: document.getElementById("quality-hero"),
+  summary: document.getElementById("summary-strip"),
+  strategies: document.getElementById("strategies"),
+  accordions: document.getElementById("accordions"),
+  expand: document.getElementById("btn-expand"),
+  collapse: document.getElementById("btn-collapse"),
+  modal: document.getElementById("detail-modal"),
+  modalTitle: document.getElementById("modal-title"),
+  modalSub: document.getElementById("modal-sub"),
+  modalBody: document.getElementById("modal-body"),
+  tip: document.getElementById("floating-tip"),
+};
 
-  var el = {
-    dropzone: document.getElementById("dropzone"),
-    dropError: document.getElementById("dropzone-error"),
-    fileInput: document.getElementById("file-input"),
-    report: document.getElementById("report"),
-    generated: document.getElementById("report-generated"),
-    filename: document.getElementById("report-filename"),
-    qualityHero: document.getElementById("quality-hero"),
-    summary: document.getElementById("summary-strip"),
-    strategies: document.getElementById("strategies"),
-    accordions: document.getElementById("accordions"),
-    expand: document.getElementById("btn-expand"),
-    collapse: document.getElementById("btn-collapse"),
-  };
+/* ---------- Floating tooltip (viewport-aware) ---------- */
 
-  var METRIC_HELP = {
-    Score:
-      "Starts at 100. Deducts for each static finding (errors weigh more), failed-test rate, and low average line coverage. Cap 0–100.",
-    Grade:
-      "Letter from score: A ≥90, B ≥80, C ≥70, D ≥55, F below 55. Label reflects overall suite health.",
-    "Total tests":
-      "Jest numTotalTests — every registered test including passed, failed, pending, and todo. So Total ≥ Passed + Failed.",
-    Passed: "Jest numPassedTests — assertions that completed successfully.",
-    Failed:
-      "Jest numFailedTests — individual failing tests (not files). The Failed Tests accordion lists files that contain those failures.",
-    Pending:
-      "Jest numPendingTests — skipped/pending tests that still count toward Total.",
-    Todo: "Jest numTodoTests — test.todo placeholders that still count toward Total.",
-    "Static errors":
-      "AST rule findings with severity error (e.g. .only, empty tests, unmocked network, tautological expects).",
-    "Static warnings":
-      "AST rule findings with severity warning (skips, flakes, RTL anti-patterns, weak matchers, etc.).",
-    "Static info":
-      "Lower-priority readability/hygiene hints that do not block CI by default.",
-  };
+function hideTip() {
+  if (!el.tip) return;
+  el.tip.hidden = true;
+  el.tip.textContent = "";
+}
 
-  var STRATEGY_BLURBS = {
-    "Disabled / focused tests":
-      "Detects .only / fit / .skip / xit / test.todo left in suites.",
-    "Async flake risks":
-      "Sleeps, done callbacks, missing awaits on async matchers.",
-    "Snapshot overuse":
-      "Too many or oversized snapshots that hide intent.",
-    "Testing Library anti-patterns":
-      "querySelector, innerHTML, heavy getByTestId, fireEvent-only.",
-    "Non-deterministic APIs":
-      "Unmocked Date.now / Math.random / new Date().",
-    "Debug leftovers": "console.*, screen.debug, debugger left behind.",
-    "Assertion quality":
-      "Weak/tautological expects, assert spam, missing expects.",
-    "Empty tests": "Tests with empty bodies.",
-    "Duplicate titles": "Repeated it/test titles in a file.",
-    "Conditional test logic":
-      "expect() inside if, or empty catch blocks.",
-    "Hardcoded secrets": "API keys / tokens / credentials in test source.",
-    "Unmocked network I/O":
-      "fetch/axios/http without an obvious mock/MSW/nock.",
-    "Mocking quality":
-      "Redundant mocks, mocking SUT, env/storage leaks.",
-    "Next.js test hygiene":
-      "next/navigation|router|image without common mocks.",
-    Readability: "Vague titles, deep describe nesting, oversized files.",
-    "Timer hygiene": "Fake timers without advance/restore.",
-    "Parse errors": "Files the auditor could not parse.",
-    "disabled-focused":
-      "Detects .only / fit / .skip / xit / test.todo left in suites.",
-    "async-flake": "Sleeps, done callbacks, missing awaits on async matchers.",
-    "snapshot-overuse": "Too many or oversized snapshots that hide intent.",
-    "rtl-antipattern":
-      "querySelector, innerHTML, heavy getByTestId, fireEvent-only.",
-    "non-deterministic": "Unmocked Date.now / Math.random / new Date().",
-    "debug-leftover": "console.*, screen.debug, debugger left behind.",
-    "assertion-quality":
-      "Weak/tautological expects, assert spam, missing expects.",
-    "empty-test": "Tests with empty bodies.",
-    "duplicate-title": "Repeated it/test titles in a file.",
-    "conditional-logic": "expect() inside if, or empty catch blocks.",
-    "hardcoded-secret": "API keys / tokens / credentials in test source.",
-    "network-unmocked":
-      "fetch/axios/http without an obvious mock/MSW/nock.",
-    "mocking-quality":
-      "Redundant mocks, mocking SUT, env/storage leaks.",
-    "nextjs-hygiene":
-      "next/navigation|router|image without common mocks.",
-    readability: "Vague titles, deep describe nesting, oversized files.",
-    "timer-hygiene": "Fake timers without advance/restore.",
-    "parse-error": "Files the auditor could not parse.",
-  };
-
-  function escapeHtml(value) {
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+function placeTip(anchor) {
+  if (!el.tip || !anchor) return;
+  var text = anchor.getAttribute("data-tip");
+  if (!text) {
+    hideTip();
+    return;
   }
+  el.tip.hidden = false;
+  el.tip.textContent = text;
 
-  function shortPath(filePath) {
-    var parts = String(filePath).split(/[/\\]/);
-    if (parts.length <= 3) return filePath;
-    return "…/" + parts.slice(-3).join("/");
+  var rect = anchor.getBoundingClientRect();
+  var tipRect = el.tip.getBoundingClientRect();
+  var gap = 8;
+  var left = rect.right - tipRect.width;
+  var top = rect.bottom + gap;
+
+  if (left < 8) left = 8;
+  if (left + tipRect.width > window.innerWidth - 8) {
+    left = Math.max(8, window.innerWidth - tipRect.width - 8);
   }
+  if (top + tipRect.height > window.innerHeight - 8) {
+    top = rect.top - tipRect.height - gap;
+  }
+  if (top < 8) top = 8;
 
-  function parseMarkdownTable(block) {
-    var lines = block
-      .split("\n")
-      .map(function (l) {
-        return l.trim();
+  el.tip.style.left = Math.round(left) + "px";
+  el.tip.style.top = Math.round(top) + "px";
+}
+
+function bindTipEvents(root) {
+  if (!root) return;
+  Array.prototype.forEach.call(root.querySelectorAll(".info-tip[data-tip]"), function (btn) {
+    if (btn.getAttribute("data-tip-bound")) return;
+    btn.setAttribute("data-tip-bound", "1");
+    btn.addEventListener("mouseenter", function () {
+      placeTip(btn);
+    });
+    btn.addEventListener("focus", function () {
+      placeTip(btn);
+    });
+    btn.addEventListener("mouseleave", hideTip);
+    btn.addEventListener("blur", hideTip);
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    });
+  });
+}
+
+/* ---------- Shared filters ---------- */
+
+function uniqueStrategies(issues) {
+  var seen = {};
+  var list = [];
+  (issues || []).forEach(function (issue) {
+    var meta = strategyMeta(issue.strategy);
+    var key = meta.id || meta.title;
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    list.push({ id: meta.id || meta.title, title: meta.title });
+  });
+  list.sort(function (a, b) {
+    return a.title.localeCompare(b.title);
+  });
+  return list;
+}
+
+function issueMatchesStrategy(issue, strategyFilter) {
+  if (!strategyFilter || strategyFilter === "all") return true;
+  var meta = strategyMeta(issue.strategy);
+  return (
+    meta.id === strategyFilter ||
+    meta.title === strategyFilter ||
+    String(issue.strategy) === strategyFilter
+  );
+}
+
+function filterIssues(opts) {
+  opts = opts || {};
+  var q = String(opts.query || "").trim().toLowerCase();
+  var severity = opts.severity || "all";
+  var strategy = opts.strategy || "all";
+  return (state.report.issues || []).filter(function (issue) {
+    if (severity !== "all" && issue.severity !== severity) return false;
+    if (!issueMatchesStrategy(issue, strategy)) return false;
+    if (!q) return true;
+    var title = strategyMeta(issue.strategy).title.toLowerCase();
+    return (
+      issue.file.toLowerCase().indexOf(q) !== -1 ||
+      issue.rule.toLowerCase().indexOf(q) !== -1 ||
+      issue.message.toLowerCase().indexOf(q) !== -1 ||
+      String(issue.strategy).toLowerCase().indexOf(q) !== -1 ||
+      title.indexOf(q) !== -1
+    );
+  });
+}
+
+function filterTests(opts) {
+  opts = opts || {};
+  var q = String(opts.query || "").trim().toLowerCase();
+  var status = opts.status || "all";
+  return (state.report.tests || []).filter(function (row) {
+    if (!statusMatchesFilter(row.status, status)) return false;
+    if (!q) return true;
+    return (
+      row.file.toLowerCase().indexOf(q) !== -1 ||
+      row.name.toLowerCase().indexOf(q) !== -1 ||
+      row.status.toLowerCase().indexOf(q) !== -1
+    );
+  });
+}
+
+function filteredCoverage() {
+  var q = state.coverageQuery.trim().toLowerCase();
+  var rows = state.report.coverage.filter(function (row) {
+    return !q || row.file.toLowerCase().indexOf(q) !== -1;
+  });
+
+  var sort = state.coverageSort;
+  rows.sort(function (a, b) {
+    if (sort === "lines-asc") return a.lines - b.lines;
+    if (sort === "lines-desc") return b.lines - a.lines;
+    if (sort === "name") return a.file.localeCompare(b.file);
+    return 0;
+  });
+  return rows;
+}
+
+function issuesToolbarHtml(ids, opts) {
+  opts = opts || {};
+  var strategies = uniqueStrategies(state.report.issues);
+  var strategyOptions =
+    '<option value="all">All strategies</option>' +
+    strategies
+      .map(function (s) {
+        return (
+          '<option value="' +
+          escapeHtml(s.id) +
+          '">' +
+          escapeHtml(s.title) +
+          "</option>"
+        );
       })
-      .filter(function (l) {
-        return l.charAt(0) === "|";
-      });
+      .join("");
 
-    if (lines.length < 2) return { headers: [], rows: [] };
+  return (
+    '<div class="acc__toolbar">' +
+    '<input class="field" id="' +
+    ids.query +
+    '" type="search" placeholder="Search file, rule, strategy, message…" autocomplete="off" />' +
+    '<select class="field select" id="' +
+    ids.severity +
+    '">' +
+    '<option value="all">All severities</option>' +
+    '<option value="error">Errors</option>' +
+    '<option value="warning">Warnings</option>' +
+    '<option value="info">Info</option>' +
+    "</select>" +
+    '<select class="field select" id="' +
+    ids.strategy +
+    '"' +
+    (opts.lockStrategy ? " disabled" : "") +
+    ">" +
+    strategyOptions +
+    "</select>" +
+    "</div>" +
+    '<div class="acc__scroll" data-results></div>' +
+    '<div class="pager" data-pager></div>'
+  );
+}
 
-    function splitRow(line) {
-      return line
-        .replace(/^\|/, "")
-        .replace(/\|$/, "")
-        .split("|")
-        .map(function (cell) {
-          return cell.trim();
+function testsToolbarHtml(ids, opts) {
+  opts = opts || {};
+  return (
+    '<div class="acc__toolbar">' +
+    '<input class="field" id="' +
+    ids.query +
+    '" type="search" placeholder="Search file or test name…" autocomplete="off" />' +
+    '<select class="field select" id="' +
+    ids.status +
+    '"' +
+    (opts.lockStatus ? " disabled" : "") +
+    ">" +
+    '<option value="all">All statuses</option>' +
+    '<option value="passed">Passed</option>' +
+    '<option value="failed">Failed</option>' +
+    '<option value="pending">Pending / skipped</option>' +
+    '<option value="todo">Todo</option>' +
+    "</select>" +
+    "</div>" +
+    '<div class="acc__scroll" data-results></div>' +
+    '<div class="pager" data-pager></div>'
+  );
+}
+
+function paintPager(pager, total, page, onPrev, onNext) {
+  var totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (page > totalPages - 1) page = totalPages - 1;
+  pager.innerHTML =
+    "<span>" +
+    total +
+    " shown · page " +
+    (page + 1) +
+    " / " +
+    totalPages +
+    "</span>" +
+    '<div class="pager__btns">' +
+    '<button type="button" class="btn btn--ghost" data-prev' +
+    (page === 0 ? " disabled" : "") +
+    ">Prev</button>" +
+    '<button type="button" class="btn btn--ghost" data-next' +
+    (page >= totalPages - 1 ? " disabled" : "") +
+    ">Next</button>" +
+    "</div>";
+  pager.querySelector("[data-prev]").onclick = onPrev;
+  pager.querySelector("[data-next]").onclick = onNext;
+  return page;
+}
+
+function pathCopyCell(filePath) {
+  return (
+    '<td class="path path--copy" tabindex="0" role="button" data-copy-path="' +
+    escapeHtml(filePath) +
+    '" title="Click to copy full path">' +
+    escapeHtml(shortPath(filePath)) +
+    "</td>"
+  );
+}
+
+function copyPathToClipboard(text, cell) {
+  if (!text) return;
+  function flash() {
+    if (!cell) return;
+    cell.classList.add("is-copied");
+    cell.setAttribute("title", "Copied!");
+    window.setTimeout(function () {
+      cell.classList.remove("is-copied");
+      cell.setAttribute("title", "Click to copy full path");
+    }, 1200);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flash).catch(function () {
+      fallbackCopy(text, flash);
+    });
+    return;
+  }
+  fallbackCopy(text, flash);
+}
+
+function fallbackCopy(text, done) {
+  var ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    if (done) done();
+  } catch (e) {
+    /* ignore */
+  }
+  document.body.removeChild(ta);
+}
+
+function paintIssuesInto(root, filterState, pageRef) {
+  var rows = filterIssues(filterState);
+  var page = pageRef.get();
+  var totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (page > totalPages - 1) page = totalPages - 1;
+  pageRef.set(page);
+  var start = page * PAGE_SIZE;
+  var pageRows = rows.slice(start, start + PAGE_SIZE);
+
+  var tableRows = pageRows
+    .map(function (issue) {
+      var meta = strategyMeta(issue.strategy);
+      return (
+        "<tr>" +
+        pathCopyCell(issue.file) +
+        "<td>" +
+        escapeHtml(issue.line) +
+        "</td>" +
+        '<td title="' +
+        escapeHtml(meta.blurb) +
+        '">' +
+        escapeHtml(meta.title) +
+        "</td>" +
+        '<td class="mono">' +
+        escapeHtml(issue.rule) +
+        "</td>" +
+        "<td>" +
+        severityPill(issue.severity) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(issue.message) +
+        "</td>" +
+        "</tr>"
+      );
+    })
+    .join("");
+
+  var results = root.querySelector("[data-results]");
+  results.innerHTML = pageRows.length
+    ? '<div class="table-wrap"><table class="data data--issues"><colgroup>' +
+      '<col class="col-file" /><col class="col-line" /><col class="col-strategy" />' +
+      '<col class="col-rule" /><col class="col-sev" /><col class="col-msg" />' +
+      "</colgroup><thead><tr>" +
+      "<th>File</th><th>Line</th><th>Strategy</th><th>Rule</th><th>Severity</th><th>Message</th>" +
+      "</tr></thead><tbody>" +
+      tableRows +
+      "</tbody></table></div>"
+    : '<p class="empty">No issues match this filter.</p>';
+
+  var pager = root.querySelector("[data-pager]");
+  paintPager(
+    pager,
+    rows.length,
+    page,
+    function () {
+      pageRef.set(Math.max(0, pageRef.get() - 1));
+      paintIssuesInto(root, filterState, pageRef);
+    },
+    function () {
+      pageRef.set(pageRef.get() + 1);
+      paintIssuesInto(root, filterState, pageRef);
+    }
+  );
+}
+
+function paintTestsInto(root, filterState, pageRef) {
+  var rows = filterTests(filterState);
+  var page = pageRef.get();
+  var totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (page > totalPages - 1) page = totalPages - 1;
+  pageRef.set(page);
+  var start = page * PAGE_SIZE;
+  var pageRows = rows.slice(start, start + PAGE_SIZE);
+
+  var tableRows = pageRows
+    .map(function (row) {
+      return (
+        "<tr>" +
+        '<td class="path" title="' +
+        escapeHtml(row.file) +
+        '">' +
+        escapeHtml(shortPath(row.file)) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(row.name) +
+        "</td>" +
+        "<td>" +
+        statusPill(row.status) +
+        "</td>" +
+        "</tr>"
+      );
+    })
+    .join("");
+
+  var results = root.querySelector("[data-results]");
+  results.innerHTML = pageRows.length
+    ? '<div class="table-wrap"><table class="data data--tests"><colgroup>' +
+      '<col class="col-file" /><col class="col-test" /><col class="col-sev" />' +
+      "</colgroup><thead><tr>" +
+      "<th>File</th><th>Test</th><th>Status</th>" +
+      "</tr></thead><tbody>" +
+      tableRows +
+      "</tbody></table></div>"
+    : '<p class="empty">No tests match this filter. Re-run the auditor to refresh Test Cases in the report.</p>';
+
+  var pager = root.querySelector("[data-pager]");
+  paintPager(
+    pager,
+    rows.length,
+    page,
+    function () {
+      pageRef.set(Math.max(0, pageRef.get() - 1));
+      paintTestsInto(root, filterState, pageRef);
+    },
+    function () {
+      pageRef.set(pageRef.get() + 1);
+      paintTestsInto(root, filterState, pageRef);
+    }
+  );
+}
+
+function failedHtml(files) {
+  if (!files || !files.length) {
+    return '<p class="empty">No failed tests in this report.</p>';
+  }
+  return (
+    '<div class="acc__scroll">' +
+    files
+      .map(function (item) {
+        var msgs = item.messages.length ? item.messages : ["(no message captured)"];
+        var multi = msgs.length > 1;
+        var blocks = msgs
+          .map(function (msg, idx) {
+            return (
+              '<div class="fail-card__item">' +
+              (multi
+                ? '<p class="fail-card__item-label">Failure ' +
+                  (idx + 1) +
+                  " of " +
+                  msgs.length +
+                  "</p>"
+                : "") +
+              '<pre class="fail-card__pre">' +
+              escapeHtml(msg) +
+              "</pre>" +
+              "</div>"
+            );
+          })
+          .join("");
+        return (
+          '<article class="fail-card">' +
+          '<div class="fail-card__head" title="' +
+          escapeHtml(item.file) +
+          '">' +
+          escapeHtml(item.file) +
+          (item.failCount
+            ? ' <span class="acc__badge acc__badge--bad">' +
+              item.failCount +
+              " failed</span>"
+            : "") +
+          "</div>" +
+          '<div class="fail-card__body">' +
+          blocks +
+          "</div>" +
+          "</article>"
+        );
+      })
+      .join("") +
+    "</div>"
+  );
+}
+
+/* ---------- Modal ---------- */
+
+function closeModal() {
+  if (!el.modal) return;
+  el.modal.hidden = true;
+  document.body.classList.remove("modal-open");
+  state.modal = null;
+  hideTip();
+}
+
+function openModal(config) {
+  if (!el.modal || !state.report) return;
+  state.modal = {
+    kind: config.kind,
+    title: config.title,
+    sub: config.sub || "",
+    severity: config.severity || "all",
+    strategy: config.strategy || "all",
+    status: config.status || "all",
+    query: "",
+    page: 0,
+    lockStrategy: !!config.lockStrategy,
+    lockStatus: !!config.lockStatus,
+  };
+  el.modalTitle.textContent = config.title;
+  el.modalSub.textContent = config.sub || "";
+  el.modal.hidden = false;
+  document.body.classList.add("modal-open");
+  paintModal();
+  var closeBtn = document.getElementById("modal-close");
+  if (closeBtn) closeBtn.focus();
+}
+
+function modalPageRef() {
+  return {
+    get: function () {
+      return state.modal ? state.modal.page : 0;
+    },
+    set: function (v) {
+      if (state.modal) state.modal.page = v;
+    },
+  };
+}
+
+function paintModal() {
+  if (!state.modal || !el.modalBody) return;
+  var m = state.modal;
+
+  if (m.kind === "failed") {
+    el.modalBody.innerHTML = failedHtml(state.report.failed);
+    return;
+  }
+
+  if (m.kind === "tests") {
+    el.modalBody.innerHTML = testsToolbarHtml(
+      { query: "modal-test-q", status: "modal-test-status" },
+      { lockStatus: m.lockStatus }
+    );
+    var tq = el.modalBody.querySelector("#modal-test-q");
+    var ts = el.modalBody.querySelector("#modal-test-status");
+    tq.value = m.query;
+    ts.value = m.status;
+    tq.addEventListener("input", function (e) {
+      m.query = e.target.value;
+      m.page = 0;
+      paintTestsInto(
+        el.modalBody,
+        { query: m.query, status: m.status },
+        modalPageRef()
+      );
+    });
+    ts.addEventListener("change", function (e) {
+      m.status = e.target.value;
+      m.page = 0;
+      paintTestsInto(
+        el.modalBody,
+        { query: m.query, status: m.status },
+        modalPageRef()
+      );
+    });
+    paintTestsInto(
+      el.modalBody,
+      { query: m.query, status: m.status },
+      modalPageRef()
+    );
+    return;
+  }
+
+  if (m.kind === "issues") {
+    el.modalBody.innerHTML = issuesToolbarHtml(
+      {
+        query: "modal-issue-q",
+        severity: "modal-issue-sev",
+        strategy: "modal-issue-strategy",
+      },
+      { lockStrategy: m.lockStrategy }
+    );
+    var iq = el.modalBody.querySelector("#modal-issue-q");
+    var isev = el.modalBody.querySelector("#modal-issue-sev");
+    var istr = el.modalBody.querySelector("#modal-issue-strategy");
+    iq.value = m.query;
+    isev.value = m.severity;
+    istr.value = m.strategy;
+    iq.addEventListener("input", function (e) {
+      m.query = e.target.value;
+      m.page = 0;
+      paintIssuesInto(
+        el.modalBody,
+        { query: m.query, severity: m.severity, strategy: m.strategy },
+        modalPageRef()
+      );
+    });
+    isev.addEventListener("change", function (e) {
+      m.severity = e.target.value;
+      m.page = 0;
+      paintIssuesInto(
+        el.modalBody,
+        { query: m.query, severity: m.severity, strategy: m.strategy },
+        modalPageRef()
+      );
+    });
+    istr.addEventListener("change", function (e) {
+      m.strategy = e.target.value;
+      m.page = 0;
+      paintIssuesInto(
+        el.modalBody,
+        { query: m.query, severity: m.severity, strategy: m.strategy },
+        modalPageRef()
+      );
+    });
+    paintIssuesInto(
+      el.modalBody,
+      { query: m.query, severity: m.severity, strategy: m.strategy },
+      modalPageRef()
+    );
+  }
+}
+
+/* ---------- Top sections ---------- */
+
+function renderQualityHero(quality) {
+  if (!el.qualityHero) return;
+  if (!quality || !quality.Score) {
+    el.qualityHero.hidden = true;
+    el.qualityHero.innerHTML = "";
+    return;
+  }
+  var gradeRaw = String(quality.Grade || "");
+  var grade = gradeRaw.charAt(0) || "–";
+  var gradeLabelMatch = gradeRaw.match(/\(([^)]+)\)/);
+  var gradeLabel = gradeLabelMatch
+    ? gradeLabelMatch[1]
+    : gradeRaw.replace(/^[A-F]\s*/, "").trim();
+  var tone = metricTone("Grade", grade);
+  var scoreTone = metricTone("Score", quality.Score);
+  var scoreNum = String(quality.Score).replace(/\/100$/, "");
+  el.qualityHero.hidden = false;
+  el.qualityHero.innerHTML =
+    '<div class="quality-hero__glow" aria-hidden="true"></div>' +
+    '<div class="quality-hero__score metric--' +
+    scoreTone +
+    '">' +
+    '<p class="quality-hero__eyebrow">Quality score' +
+    infoButton("Score") +
+    "</p>" +
+    '<p class="quality-hero__number">' +
+    escapeHtml(scoreNum) +
+    '<span class="quality-hero__of">/100</span></p>' +
+    "</div>" +
+    '<div class="quality-hero__grade metric--' +
+    tone +
+    '">' +
+    '<p class="quality-hero__eyebrow">Grade' +
+    infoButton("Grade") +
+    "</p>" +
+    '<p class="quality-hero__letter">' +
+    escapeHtml(grade) +
+    "</p>" +
+    '<p class="quality-hero__label">' +
+    escapeHtml(gradeLabel) +
+    "</p>" +
+    "</div>" +
+    '<div class="quality-hero__copy">' +
+    "<p>" +
+    escapeHtml(
+      quality.Summary ||
+        "Suite health from static strategies, failures, and coverage."
+    ) +
+    "</p>" +
+    '<p class="quality-hero__note">Total includes pending and todo tests — so Total is not always Passed + Failed.</p>' +
+    "</div>";
+  bindTipEvents(el.qualityHero);
+}
+
+function renderSummaryStrip(summary) {
+  var order = [
+    "Total tests",
+    "Passed",
+    "Failed",
+    "Pending",
+    "Todo",
+    "Static errors",
+    "Static warnings",
+    "Static info",
+  ];
+  var html = "";
+  order.forEach(function (key) {
+    if (!(key in summary)) return;
+    html += metricCard(key, summary[key], key, !!METRIC_MODAL[key]);
+  });
+  el.summary.innerHTML = html;
+  bindTipEvents(el.summary);
+
+  Array.prototype.forEach.call(
+    el.summary.querySelectorAll("[data-open-metric]"),
+    function (card) {
+      function open() {
+        var key = card.getAttribute("data-open-metric");
+        var cfg = METRIC_MODAL[key];
+        if (!cfg) return;
+        openModal({
+          kind: cfg.kind,
+          title: cfg.title,
+          sub: cfg.sub,
+          severity: cfg.severity || "all",
+          status: cfg.status || "all",
+          lockStatus: cfg.kind === "tests" && cfg.status !== "all",
         });
-    }
-
-    var headers = splitRow(lines[0]);
-    var rows = [];
-    for (var i = 2; i < lines.length; i++) {
-      var cells = splitRow(lines[i]);
-      if (cells.length === 1 && cells[0] === "") continue;
-      rows.push(cells);
-    }
-    return { headers: headers, rows: rows };
-  }
-
-  function sectionBody(md, heading) {
-    var re = new RegExp(
-      "##\\s+" + heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\n([\\s\\S]*?)(?=\\n##\\s+|$)"
-    );
-    var match = md.match(re);
-    return match ? match[1].trim() : "";
-  }
-
-  function parseFailedTests(body) {
-    if (!body || /^none\.?$/i.test(body.trim())) {
-      return { files: [], meta: { failedTests: 0, filesWithFailures: 0 } };
-    }
-
-    var meta = { failedTests: 0, filesWithFailures: 0 };
-    var metaLine = body.match(
-      /Failed tests:\s*\*\*(\d+)\*\*.*?Files with failures:\s*\*\*(\d+)\*\*/i
-    );
-    if (metaLine) {
-      meta.failedTests = Number(metaLine[1]) || 0;
-      meta.filesWithFailures = Number(metaLine[2]) || 0;
-    }
-
-    var items = [];
-    var parts = body.split(/\n(?=###\s+)/);
-    for (var j = 0; j < parts.length; j++) {
-      var part = parts[j].trim();
-      if (part.indexOf("### ") !== 0) continue;
-      var nl = part.indexOf("\n");
-      var filePath = (nl === -1 ? part.slice(4) : part.slice(4, nl)).trim();
-      var failInFile = 0;
-      var failMatch = part.match(/Failing in this file:\s*(\d+)/i);
-      if (failMatch) failInFile = Number(failMatch[1]) || 0;
-      var msgs = [];
-      var re = /```[^\n]*\n([\s\S]*?)```/g;
-      var mm;
-      while ((mm = re.exec(part))) {
-        msgs.push(mm[1].replace(/\s+$/, ""));
       }
-      if (!failInFile) failInFile = Math.max(msgs.length, 1);
-      items.push({ file: filePath, messages: msgs, failCount: failInFile });
+      card.addEventListener("click", function (e) {
+        if (e.target.closest && e.target.closest(".info-tip")) return;
+        open();
+      });
+      card.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      });
     }
+  );
+}
 
-    if (!meta.filesWithFailures) meta.filesWithFailures = items.length;
-    if (!meta.failedTests) {
-      meta.failedTests = items.reduce(function (n, it) {
-        return n + (it.failCount || 0);
-      }, 0);
-    }
-
-    return { files: items, meta: meta };
-  }
-
-  function parseReport(md) {
-    var generatedMatch = md.match(/Generated:\s*([^\n]+)/i);
-    var summaryTable = parseMarkdownTable(sectionBody(md, "Summary"));
-    var summary = {};
-    summaryTable.rows.forEach(function (row) {
-      if (row.length >= 2) summary[row[0]] = row[1];
-    });
-
-    var qualityBody = sectionBody(md, "Quality Score");
-    var qualityMain = qualityBody.split(/\n###\s+/)[0] || "";
-    var qualityTable = parseMarkdownTable(qualityMain);
-    var quality = {};
-    qualityTable.rows.forEach(function (row) {
-      if (row.length >= 2) quality[row[0]] = row[1];
-    });
-
-    var strategiesBlock = "";
-    var stratMatch = qualityBody.match(
-      /###\s+Strategies\s*\n([\s\S]*?)(?=\n###\s+|$)/
-    );
-    if (stratMatch) strategiesBlock = stratMatch[1];
-    var strategiesTable = parseMarkdownTable(strategiesBlock);
-    var strategies = strategiesTable.rows.map(function (row) {
-      return {
-        title: row[0] || "",
-        errors: Number(row[1]) || 0,
-        warnings: Number(row[2]) || 0,
-        infos: Number(row[3]) || 0,
-        total: Number(row[4]) || 0,
-      };
-    });
-
-    var issuesTable = parseMarkdownTable(sectionBody(md, "Static Analysis Issues"));
-    var issues = issuesTable.rows.map(function (row) {
-      // New format: File | Line | Strategy | Rule | Severity | Message
-      // Legacy:     File | Line | Rule | Severity | Message
-      if (row.length >= 6) {
-        return {
-          file: row[0] || "",
-          line: row[1] || "",
-          strategy: row[2] || "",
-          rule: row[3] || "",
-          severity: (row[4] || "").toLowerCase(),
-          message: row[5] || "",
+function renderStrategies(strategies, issues) {
+  if (!el.strategies) return;
+  var list = strategies && strategies.length ? strategies.slice() : [];
+  if (!list.length && issues && issues.length) {
+    var map = {};
+    issues.forEach(function (issue) {
+      var meta = strategyMeta(issue.strategy);
+      var id = meta.id || meta.title || "other";
+      if (!map[id]) {
+        map[id] = {
+          title: meta.title,
+          id: id,
+          errors: 0,
+          warnings: 0,
+          infos: 0,
+          total: 0,
         };
       }
-      return {
-        file: row[0] || "",
-        line: row[1] || "",
-        strategy: "",
-        rule: row[2] || "",
-        severity: (row[3] || "").toLowerCase(),
-        message: row[4] || "",
-      };
+      map[id].total++;
+      if (issue.severity === "error") map[id].errors++;
+      else if (issue.severity === "warning") map[id].warnings++;
+      else map[id].infos++;
     });
-
-    var failedParsed = parseFailedTests(sectionBody(md, "Failed Tests"));
-
-    var coverageTable = parseMarkdownTable(sectionBody(md, "Coverage"));
-    var coverage = coverageTable.rows.map(function (row) {
-      return {
-        file: row[0] || "",
-        statements: Number(row[1]) || 0,
-        branches: Number(row[2]) || 0,
-        functions: Number(row[3]) || 0,
-        lines: Number(row[4]) || 0,
-      };
+    list = Object.keys(map).map(function (k) {
+      return map[k];
     });
-
-    return {
-      generated: generatedMatch ? generatedMatch[1].trim() : "",
-      summary: summary,
-      quality: quality,
-      strategies: strategies,
-      issues: issues,
-      failed: failedParsed.files,
-      failedMeta: failedParsed.meta,
-      coverage: coverage,
-      rawEmptyCoverage: /No coverage data found/i.test(sectionBody(md, "Coverage")),
-    };
+  }
+  if (!list.length) {
+    el.strategies.hidden = true;
+    el.strategies.innerHTML = "";
+    return;
   }
 
-  function metricTone(key, value) {
-    if (key === "Score") {
-      var score = parseInt(String(value), 10);
-      if (isNaN(score)) return "neutral";
-      if (score >= 80) return "ok";
-      if (score >= 55) return "warn";
-      return "bad";
-    }
-    if (key === "Grade") {
-      var g = String(value).charAt(0).toUpperCase();
-      if (g === "A" || g === "B") return "ok";
-      if (g === "C") return "warn";
-      return "bad";
-    }
-    if (key === "Passed") return "ok";
-    if (key === "Failed" || key === "Static errors") {
-      return Number(String(value).replace(/,/g, "")) > 0 ? "bad" : "ok";
-    }
-    if (key === "Static warnings" || key === "Pending" || key === "Todo") {
-      return Number(String(value).replace(/,/g, "")) > 0 ? "warn" : "neutral";
-    }
-    if (key === "Total tests") return "neutral";
-    if (key === "Static info") return "neutral";
-    return "neutral";
-  }
+  var totalErr = 0;
+  var totalWarn = 0;
+  var totalInfo = 0;
+  list.forEach(function (s) {
+    totalErr += s.errors || 0;
+    totalWarn += s.warnings || 0;
+    totalInfo += s.infos || 0;
+  });
+  var worstTone = totalErr > 0 ? "bad" : totalWarn > 0 ? "warn" : "ok";
+  var deckIndex = 0;
 
-  function infoButton(helpKey) {
-    var tip = METRIC_HELP[helpKey] || "Metric from the Jest audit report.";
+  function cardHtml(s, index) {
+    var meta = strategyMeta(s.title);
+    var blurb = meta.blurb;
+    var tone = s.errors > 0 ? "bad" : s.warnings > 0 ? "warn" : "ok";
+    var strategyKey = meta.id || s.title;
     return (
-      '<button type="button" class="info-tip" aria-label="About ' +
-      escapeHtml(helpKey) +
-      '" data-tip="' +
-      escapeHtml(tip) +
-      '"><span aria-hidden="true">i</span></button>'
-    );
-  }
-
-  function metricCard(label, value, helpKey, extraClass) {
-    var tone = metricTone(helpKey || label, value);
-    return (
-      '<article class="metric metric--' +
+      '<article class="deck-card deck-card--' +
       tone +
-      (extraClass ? " " + extraClass : "") +
-      '">' +
-      '<div class="metric__top">' +
-      '<p class="metric__label">' +
-      escapeHtml(label) +
+      '" data-deck-card data-index="' +
+      index +
+      '" data-open-strategy="' +
+      escapeHtml(strategyKey) +
+      '" tabindex="-1" role="button" aria-label="' +
+      escapeHtml(meta.title || s.title) +
+      ' — view findings">' +
+      '<p class="deck-card__kicker">Strategy ' +
+      (index + 1) +
+      " of " +
+      list.length +
       "</p>" +
-      infoButton(helpKey || label) +
-      "</div>" +
-      '<p class="metric__value">' +
-      escapeHtml(value) +
+      '<p class="deck-card__title">' +
+      escapeHtml(meta.title || s.title) +
       "</p>" +
+      '<p class="deck-card__blurb">' +
+      escapeHtml(blurb) +
+      "</p>" +
+      '<p class="deck-card__counts">' +
+      '<span class="tone-bad">' +
+      s.errors +
+      " errors</span> · <span class=\"tone-warn\">" +
+      s.warnings +
+      " warnings</span> · <span class=\"tone-muted\">" +
+      s.infos +
+      " info</span>" +
+      "</p>" +
+      '<p class="deck-card__hint">Open findings</p>' +
       "</article>"
     );
   }
 
-  function renderQualityHero(quality) {
-    if (!el.qualityHero) return;
-    if (!quality || !quality.Score) {
-      el.qualityHero.hidden = true;
-      el.qualityHero.innerHTML = "";
-      return;
-    }
-    var gradeRaw = String(quality.Grade || "");
-    var grade = gradeRaw.charAt(0) || "–";
-    var gradeLabelMatch = gradeRaw.match(/\(([^)]+)\)/);
-    var gradeLabel = gradeLabelMatch
-      ? gradeLabelMatch[1]
-      : gradeRaw.replace(/^[A-F]\s*/, "").trim();
-    var tone = metricTone("Grade", grade);
-    var scoreTone = metricTone("Score", quality.Score);
-    var scoreNum = String(quality.Score).replace(/\/100$/, "");
-    el.qualityHero.hidden = false;
-    el.qualityHero.innerHTML =
-      '<div class="quality-hero__glow" aria-hidden="true"></div>' +
-      '<div class="quality-hero__score metric--' +
-      scoreTone +
-      '">' +
-      '<p class="quality-hero__eyebrow">Quality score' +
-      infoButton("Score") +
-      "</p>" +
-      '<p class="quality-hero__number">' +
-      escapeHtml(scoreNum) +
-      '<span class="quality-hero__of">/100</span></p>' +
-      "</div>" +
-      '<div class="quality-hero__grade metric--' +
-      tone +
-      '">' +
-      '<p class="quality-hero__eyebrow">Grade' +
-      infoButton("Grade") +
-      "</p>" +
-      '<p class="quality-hero__letter">' +
-      escapeHtml(grade) +
-      "</p>" +
-      '<p class="quality-hero__label">' +
-      escapeHtml(gradeLabel) +
-      "</p>" +
-      "</div>" +
-      '<div class="quality-hero__copy">' +
-      "<p>" +
-      escapeHtml(quality.Summary || "Suite health from static strategies, failures, and coverage.") +
-      "</p>" +
-      '<p class="quality-hero__note">Total tests include pending/todo — so Total is not always Passed + Failed.</p>' +
-      "</div>";
-  }
+  el.strategies.hidden = false;
+  el.strategies.innerHTML =
+    '<div class="strat-deck" data-deck>' +
+    '<button type="button" class="strat-deck__sleeve strat-deck__sleeve--' +
+    worstTone +
+    '" data-deck-toggle aria-expanded="false">' +
+    '<div class="strat-deck__stack" aria-hidden="true">' +
+    '<span class="strat-deck__ghost strat-deck__ghost--3"></span>' +
+    '<span class="strat-deck__ghost strat-deck__ghost--2"></span>' +
+    '<span class="strat-deck__ghost strat-deck__ghost--1"></span>' +
+    '<span class="strat-deck__top"></span>' +
+    "</div>" +
+    '<div class="strat-deck__copy">' +
+    '<p class="strat-deck__label">Strategies deck</p>' +
+    '<p class="strat-deck__summary">' +
+    list.length +
+    " check" +
+    (list.length === 1 ? "" : "s") +
+    " tucked away · " +
+    totalErr +
+    " errors · " +
+    totalWarn +
+    " warnings · " +
+    totalInfo +
+    " info</p>" +
+    '<p class="strat-deck__nudge">Most people skip this — fan open only if you want the detail.</p>' +
+    "</div>" +
+    '<span class="strat-deck__action">Fan open</span>' +
+    "</button>" +
+    '<div class="strat-deck__fan" data-deck-fan hidden>' +
+    '<div class="strat-deck__stage" data-deck-stage>' +
+    list.map(cardHtml).join("") +
+    "</div>" +
+    '<div class="strat-deck__nav">' +
+    '<button type="button" class="btn btn--ghost" data-deck-prev aria-label="Previous strategy">‹</button>' +
+    '<span class="strat-deck__pos" data-deck-pos></span>' +
+    '<button type="button" class="btn btn--ghost" data-deck-next aria-label="Next strategy">›</button>' +
+    '<button type="button" class="btn btn--ghost strat-deck__putaway" data-deck-close>Put away</button>' +
+    "</div>" +
+    "</div>" +
+    "</div>";
 
-  function renderSummaryStrip(summary) {
-    var order = [
-      "Total tests",
-      "Passed",
-      "Failed",
-      "Pending",
-      "Todo",
-      "Static errors",
-      "Static warnings",
-      "Static info",
-    ];
-    var html = "";
-    order.forEach(function (key) {
-      if (!(key in summary)) return;
-      html += metricCard(key, summary[key], key);
+  var root = el.strategies.querySelector("[data-deck]");
+  var sleeve = root.querySelector("[data-deck-toggle]");
+  var fan = root.querySelector("[data-deck-fan]");
+  var stage = root.querySelector("[data-deck-stage]");
+  var posEl = root.querySelector("[data-deck-pos]");
+  var cards = root.querySelectorAll("[data-deck-card]");
+
+  function paintDeck() {
+    Array.prototype.forEach.call(cards, function (card) {
+      var i = Number(card.getAttribute("data-index"));
+      var offset = i - deckIndex;
+      var abs = Math.abs(offset);
+      card.classList.toggle("is-active", offset === 0);
+      card.classList.toggle("is-behind", offset !== 0);
+      card.tabIndex = offset === 0 ? 0 : -1;
+      card.setAttribute("aria-hidden", offset === 0 ? "false" : "true");
+      card.style.zIndex = String(100 - abs);
+      card.style.opacity = String(Math.max(0.28, 1 - abs * 0.28));
+      card.style.transform =
+        "translateX(" +
+        offset * 14 +
+        "px) translateY(" +
+        abs * 6 +
+        "px) scale(" +
+        (1 - abs * 0.045) +
+        ") rotate(" +
+        offset * 1.4 +
+        "deg)";
+      // Hide far cards from tab/paint noise
+      card.style.visibility = abs > 3 ? "hidden" : "visible";
     });
-    el.summary.innerHTML = html;
+    posEl.textContent = deckIndex + 1 + " / " + list.length;
   }
 
-  function renderStrategies(strategies, issues) {
-    if (!el.strategies) return;
-    var list = strategies && strategies.length ? strategies.slice() : [];
-    if (!list.length && issues && issues.length) {
-      var map = {};
-      issues.forEach(function (issue) {
-        var id = issue.strategy || "other";
-        if (!map[id]) map[id] = { title: id, errors: 0, warnings: 0, infos: 0, total: 0 };
-        map[id].total++;
-        if (issue.severity === "error") map[id].errors++;
-        else if (issue.severity === "warning") map[id].warnings++;
-        else map[id].infos++;
-      });
-      list = Object.keys(map).map(function (k) {
-        return map[k];
-      });
+  function openFindings(key) {
+    var meta = strategyMeta(key);
+    openModal({
+      kind: "issues",
+      title: meta.title,
+      sub: meta.blurb,
+      strategy: meta.id || key,
+      severity: "all",
+      lockStrategy: true,
+    });
+  }
+
+  function setExpanded(open) {
+    fan.hidden = !open;
+    sleeve.hidden = open;
+    sleeve.setAttribute("aria-expanded", open ? "true" : "false");
+    root.classList.toggle("is-open", open);
+    if (open) {
+      paintDeck();
+      var active = stage.querySelector(".deck-card.is-active");
+      if (active) active.focus();
     }
-    if (!list.length) {
-      el.strategies.hidden = true;
-      el.strategies.innerHTML = "";
-      return;
-    }
-    el.strategies.hidden = false;
-    el.strategies.innerHTML =
-      '<div class="strategies__head">' +
-      "<h2>Strategies used</h2>" +
-      "<p>Each card is a static analysis strategy. Counts are findings from this audit.</p>" +
-      "</div>" +
-      '<div class="strategies__grid">' +
-      list
-        .map(function (s) {
-          var key = String(s.title || "")
-            .toLowerCase()
-            .replace(/\s+/g, "-");
-          var blurb =
-            STRATEGY_BLURBS[s.title] ||
-            STRATEGY_BLURBS[key] ||
-            "Static analysis strategy applied to Jest/Next.js tests.";
-          var tone = s.errors > 0 ? "bad" : s.warnings > 0 ? "warn" : "ok";
-          return (
-            '<article class="strategy-card strategy-card--' +
-            tone +
-            '">' +
-            '<div class="metric__top">' +
-            '<p class="strategy-card__title">' +
-            escapeHtml(s.title) +
-            "</p>" +
-            '<button type="button" class="info-tip" aria-label="About strategy" data-tip="' +
-            escapeHtml(blurb) +
-            '"><span aria-hidden="true">i</span></button>' +
-            "</div>" +
-            '<p class="strategy-card__blurb">' +
-            escapeHtml(blurb) +
-            "</p>" +
-            '<p class="strategy-card__counts">' +
-            '<span class="tone-bad">' +
-            s.errors +
-            " err</span> · <span class=\"tone-warn\">" +
-            s.warnings +
-            " warn</span> · <span class=\"tone-muted\">" +
-            s.infos +
-            " info</span>" +
-            "</p>" +
-            "</article>"
-          );
-        })
-        .join("") +
-      "</div>";
   }
 
-  function covClass(pct) {
-    if (pct >= 80) return "cov--hi";
-    if (pct >= 50) return "cov--mid";
-    return "cov--lo";
-  }
+  sleeve.addEventListener("click", function () {
+    setExpanded(true);
+  });
 
-  function accordionShell(id, title, subtitle, badgeText, badgeTone) {
-    return (
-      '<details class="acc" data-panel="' +
-      id +
-      '">' +
-      '<summary class="acc__summary">' +
-      '<div class="acc__heading">' +
-      '<p class="acc__title">' +
-      escapeHtml(title) +
-      "</p>" +
-      '<p class="acc__sub">' +
-      escapeHtml(subtitle) +
-      "</p>" +
-      "</div>" +
-      '<div class="acc__meta">' +
-      '<span class="acc__badge' +
-      (badgeTone ? " acc__badge--" + badgeTone : "") +
-      '">' +
-      escapeHtml(badgeText) +
-      "</span>" +
-      '<span class="acc__chevron" aria-hidden="true"></span>' +
-      "</div>" +
-      "</summary>" +
-      '<div class="acc__body" data-body="' +
-      id +
-      '"><p class="empty">Open to load this section…</p></div>' +
-      "</details>"
-    );
-  }
+  root.querySelector("[data-deck-close]").addEventListener("click", function () {
+    setExpanded(false);
+    sleeve.focus();
+  });
 
-  function buildAccordions(report) {
-    var errCount = report.issues.filter(function (i) {
-      return i.severity === "error";
-    }).length;
-    var warnCount = report.issues.filter(function (i) {
-      return i.severity === "warning";
-    }).length;
-    var issueTone = errCount > 0 ? "bad" : warnCount > 0 ? "warn" : "ok";
+  root.querySelector("[data-deck-prev]").addEventListener("click", function () {
+    deckIndex = (deckIndex - 1 + list.length) % list.length;
+    paintDeck();
+  });
 
-    var failedTests =
-      (report.failedMeta && report.failedMeta.failedTests) ||
-      Number(report.summary.Failed) ||
-      0;
-    var failedFiles =
-      (report.failedMeta && report.failedMeta.filesWithFailures) ||
-      (report.failed && report.failed.length) ||
-      0;
-    var failTone = failedTests > 0 ? "bad" : "ok";
-    var covTone = report.coverage.length > 0 ? "ok" : "warn";
+  root.querySelector("[data-deck-next]").addEventListener("click", function () {
+    deckIndex = (deckIndex + 1) % list.length;
+    paintDeck();
+  });
 
-    el.accordions.innerHTML =
-      accordionShell(
-        "issues",
-        "Static Analysis Issues",
-        errCount + " errors · " + warnCount + " warnings across strategies",
-        String(report.issues.length),
-        issueTone
-      ) +
-      accordionShell(
-        "failed",
-        "Failed Tests",
-        failedTests +
-          " failing tests across " +
-          failedFiles +
-          " file" +
-          (failedFiles === 1 ? "" : "s"),
-        String(failedTests),
-        failTone
-      ) +
-      accordionShell(
-        "coverage",
-        "Coverage",
-        "Per-file statements, branches, functions, lines",
-        report.coverage.length ? String(report.coverage.length) + " files" : "n/a",
-        covTone
-      );
-
-    Array.prototype.forEach.call(
-      el.accordions.querySelectorAll("details.acc"),
-      function (details) {
-        details.addEventListener("toggle", function () {
-          if (details.open) ensurePanel(details.getAttribute("data-panel"));
-        });
+  Array.prototype.forEach.call(cards, function (card) {
+    card.addEventListener("click", function () {
+      var i = Number(card.getAttribute("data-index"));
+      if (i !== deckIndex) {
+        deckIndex = i;
+        paintDeck();
+        return;
       }
-    );
-  }
-
-  function filteredIssues() {
-    var q = state.issueQuery.trim().toLowerCase();
-    return state.report.issues.filter(function (issue) {
-      if (state.issueSeverity !== "all" && issue.severity !== state.issueSeverity) {
-        return false;
-      }
-      if (!q) return true;
-      return (
-        issue.file.toLowerCase().indexOf(q) !== -1 ||
-        issue.rule.toLowerCase().indexOf(q) !== -1 ||
-        issue.message.toLowerCase().indexOf(q) !== -1
-      );
+      openFindings(card.getAttribute("data-open-strategy"));
     });
-  }
-
-  function filteredCoverage() {
-    var q = state.coverageQuery.trim().toLowerCase();
-    var rows = state.report.coverage.filter(function (row) {
-      return !q || row.file.toLowerCase().indexOf(q) !== -1;
-    });
-
-    var sort = state.coverageSort;
-    rows.sort(function (a, b) {
-      if (sort === "lines-asc") return a.lines - b.lines;
-      if (sort === "lines-desc") return b.lines - a.lines;
-      if (sort === "name") return a.file.localeCompare(b.file);
-      return 0;
-    });
-    return rows;
-  }
-
-  function formatGenerated(raw) {
-    if (!raw) return "";
-    var d = new Date(raw);
-    if (isNaN(d.getTime())) return String(raw);
-    try {
-      return d.toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
-    } catch (e) {
-      return d.toLocaleString();
-    }
-  }
-
-  function renderIssuesPanel() {
-    var body = el.accordions.querySelector('[data-body="issues"]');
-    if (!body) return;
-
-    var needsShell = !body.querySelector("[data-issues-results]");
-    if (needsShell) {
-      body.innerHTML =
-        '<div class="acc__toolbar">' +
-        '<input class="field" id="issue-q" type="search" placeholder="Filter file, rule, message…" autocomplete="off" />' +
-        '<select class="field select" id="issue-sev">' +
-        '<option value="all">All severities</option>' +
-        '<option value="error">Errors</option>' +
-        '<option value="warning">Warnings</option>' +
-        "</select>" +
-        "</div>" +
-        '<div class="acc__scroll" data-issues-results></div>' +
-        '<div class="pager" data-issues-pager></div>';
-
-      var q = body.querySelector("#issue-q");
-      var sev = body.querySelector("#issue-sev");
-      q.value = state.issueQuery;
-      sev.value = state.issueSeverity;
-
-      q.addEventListener("input", function (e) {
-        state.issueQuery = e.target.value;
-        state.issuesPage = 0;
-        paintIssuesResults(body);
-      });
-      sev.addEventListener("change", function (e) {
-        state.issueSeverity = e.target.value;
-        state.issuesPage = 0;
-        paintIssuesResults(body);
-      });
-    }
-
-    paintIssuesResults(body);
-  }
-
-  function paintIssuesResults(body) {
-    var rows = filteredIssues();
-    var totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-    if (state.issuesPage > totalPages - 1) state.issuesPage = totalPages - 1;
-    var start = state.issuesPage * PAGE_SIZE;
-    var pageRows = rows.slice(start, start + PAGE_SIZE);
-
-    var tableRows = pageRows
-      .map(function (issue) {
-        return (
-          "<tr>" +
-          '<td class="path" title="' +
-          escapeHtml(issue.file) +
-          '">' +
-          escapeHtml(shortPath(issue.file)) +
-          "</td>" +
-          "<td>" +
-          escapeHtml(issue.line) +
-          "</td>" +
-          '<td class="mono">' +
-          escapeHtml(issue.strategy || "—") +
-          "</td>" +
-          '<td class="mono">' +
-          escapeHtml(issue.rule) +
-          "</td>" +
-          "<td><span class=\"pill pill--" +
-          escapeHtml(
-            issue.severity === "error"
-              ? "error"
-              : issue.severity === "info"
-                ? "warning"
-                : "warning"
-          ) +
-          '">' +
-          escapeHtml(issue.severity) +
-          "</span></td>" +
-          "<td>" +
-          escapeHtml(issue.message) +
-          "</td>" +
-          "</tr>"
-        );
-      })
-      .join("");
-
-    var results = body.querySelector("[data-issues-results]");
-    results.innerHTML = pageRows.length
-      ? '<div class="table-wrap"><table class="data data--issues"><colgroup>' +
-        '<col class="col-file" /><col class="col-line" /><col class="col-strategy" />' +
-        '<col class="col-rule" /><col class="col-sev" /><col class="col-msg" />' +
-        "</colgroup><thead><tr>" +
-        "<th>File</th><th>Line</th><th>Strategy</th><th>Rule</th><th>Severity</th><th>Message</th>" +
-        "</tr></thead><tbody>" +
-        tableRows +
-        "</tbody></table></div>"
-      : '<p class="empty">No issues match this filter.</p>';
-
-    var pager = body.querySelector("[data-issues-pager]");
-    pager.innerHTML =
-      "<span>" +
-      rows.length +
-      " shown · page " +
-      (state.issuesPage + 1) +
-      " / " +
-      totalPages +
-      "</span>" +
-      '<div class="pager__btns">' +
-      '<button type="button" class="btn btn--ghost" data-issues-prev' +
-      (state.issuesPage === 0 ? " disabled" : "") +
-      ">Prev</button>" +
-      '<button type="button" class="btn btn--ghost" data-issues-next' +
-      (state.issuesPage >= totalPages - 1 ? " disabled" : "") +
-      ">Next</button>" +
-      "</div>";
-
-    pager.querySelector("[data-issues-prev]").onclick = function () {
-      state.issuesPage = Math.max(0, state.issuesPage - 1);
-      paintIssuesResults(body);
-    };
-    pager.querySelector("[data-issues-next]").onclick = function () {
-      state.issuesPage += 1;
-      paintIssuesResults(body);
-    };
-  }
-
-  function renderFailedPanel() {
-    var body = el.accordions.querySelector('[data-body="failed"]');
-    if (!body) return;
-
-    if (!state.report.failed.length) {
-      body.innerHTML = '<p class="empty">No failed tests in this report.</p>';
-      return;
-    }
-
-    var html =
-      '<div class="acc__scroll">' +
-      state.report.failed
-        .map(function (item) {
-          var blocks = (item.messages.length ? item.messages : ["(no message captured)"])
-            .map(function (msg) {
-              return '<pre class="fail-card__pre">' + escapeHtml(msg) + "</pre>";
-            })
-            .join("");
-          return (
-            '<article class="fail-card">' +
-            '<div class="fail-card__head" title="' +
-            escapeHtml(item.file) +
-            '">' +
-            escapeHtml(item.file) +
-            (item.failCount
-              ? ' <span class="acc__badge acc__badge--bad">' +
-                item.failCount +
-                " failed</span>"
-              : "") +
-            "</div>" +
-            blocks +
-            "</article>"
-          );
-        })
-        .join("") +
-      "</div>";
-
-    body.innerHTML = html;
-  }
-
-  function renderCoveragePanel() {
-    var body = el.accordions.querySelector('[data-body="coverage"]');
-    if (!body) return;
-
-    if (!state.report.coverage.length) {
-      body.innerHTML =
-        '<p class="empty">' +
-        (state.report.rawEmptyCoverage
-          ? "No coverage data found in the report."
-          : "No coverage rows to display.") +
-        "</p>";
-      return;
-    }
-
-    var needsShell = !body.querySelector("[data-cov-results]");
-    if (needsShell) {
-      body.innerHTML =
-        '<div class="acc__toolbar">' +
-        '<input class="field" id="cov-q" type="search" placeholder="Filter by file path…" autocomplete="off" />' +
-        '<select class="field select" id="cov-sort">' +
-        '<option value="lines-asc">Lowest lines %</option>' +
-        '<option value="lines-desc">Highest lines %</option>' +
-        '<option value="name">File name</option>' +
-        "</select>" +
-        "</div>" +
-        '<div class="acc__scroll" data-cov-results></div>' +
-        '<div class="pager" data-cov-pager></div>';
-
-      var q = body.querySelector("#cov-q");
-      var sort = body.querySelector("#cov-sort");
-      q.value = state.coverageQuery;
-      sort.value = state.coverageSort;
-
-      q.addEventListener("input", function (e) {
-        state.coverageQuery = e.target.value;
-        state.coveragePage = 0;
-        paintCoverageResults(body);
-      });
-      sort.addEventListener("change", function (e) {
-        state.coverageSort = e.target.value;
-        state.coveragePage = 0;
-        paintCoverageResults(body);
-      });
-    }
-
-    paintCoverageResults(body);
-  }
-
-  function paintCoverageResults(body) {
-    var rows = filteredCoverage();
-    var totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-    if (state.coveragePage > totalPages - 1) state.coveragePage = totalPages - 1;
-    var start = state.coveragePage * PAGE_SIZE;
-    var pageRows = rows.slice(start, start + PAGE_SIZE);
-
-    var tableRows = pageRows
-      .map(function (row) {
-        function cell(pct) {
-          return (
-            '<td class="cov ' +
-            covClass(pct) +
-            '">' +
-            escapeHtml(pct) +
-            "%</td>"
-          );
+    card.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        if (Number(card.getAttribute("data-index")) === deckIndex) {
+          openFindings(card.getAttribute("data-open-strategy"));
         }
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        deckIndex = (deckIndex + 1) % list.length;
+        paintDeck();
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        deckIndex = (deckIndex - 1 + list.length) % list.length;
+        paintDeck();
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setExpanded(false);
+        sleeve.focus();
+      }
+    });
+  });
+
+  paintDeck();
+}
+
+function accordionShell(id, title, subtitle, badgeText, badgeTone) {
+  return (
+    '<details class="acc" data-panel="' +
+    id +
+    '">' +
+    '<summary class="acc__summary">' +
+    '<div class="acc__heading">' +
+    '<p class="acc__title">' +
+    escapeHtml(title) +
+    "</p>" +
+    '<p class="acc__sub">' +
+    escapeHtml(subtitle) +
+    "</p>" +
+    "</div>" +
+    '<div class="acc__meta">' +
+    '<span class="acc__badge' +
+    (badgeTone ? " acc__badge--" + badgeTone : "") +
+    '">' +
+    escapeHtml(badgeText) +
+    "</span>" +
+    '<span class="acc__chevron" aria-hidden="true"></span>' +
+    "</div>" +
+    "</summary>" +
+    '<div class="acc__body" data-body="' +
+    id +
+    '"><p class="empty">Open to load this section…</p></div>' +
+    "</details>"
+  );
+}
+
+function buildAccordions(report) {
+  var errCount = report.issues.filter(function (i) {
+    return i.severity === "error";
+  }).length;
+  var warnCount = report.issues.filter(function (i) {
+    return i.severity === "warning";
+  }).length;
+  var infoCount = report.issues.filter(function (i) {
+    return i.severity === "info";
+  }).length;
+  var issueTone = errCount > 0 ? "bad" : warnCount > 0 ? "warn" : "ok";
+
+  var failedTests =
+    (report.failedMeta && report.failedMeta.failedTests) ||
+    Number(report.summary.Failed) ||
+    0;
+  var failedFiles =
+    (report.failedMeta && report.failedMeta.filesWithFailures) ||
+    (report.failed && report.failed.length) ||
+    0;
+  var failTone = failedTests > 0 ? "bad" : "ok";
+  var covTone = report.coverage.length > 0 ? "ok" : "warn";
+
+  el.accordions.innerHTML =
+    accordionShell(
+      "issues",
+      "Static Analysis Issues",
+      errCount +
+        " errors · " +
+        warnCount +
+        " warnings · " +
+        infoCount +
+        " info across strategies",
+      String(report.issues.length),
+      issueTone
+    ) +
+    accordionShell(
+      "failed",
+      "Failed Tests",
+      failedTests +
+        " failing tests across " +
+        failedFiles +
+        " file" +
+        (failedFiles === 1 ? "" : "s"),
+      String(failedTests),
+      failTone
+    ) +
+    accordionShell(
+      "coverage",
+      "Coverage",
+      "Per-file statements, branches, functions, lines",
+      report.coverage.length ? String(report.coverage.length) + " files" : "n/a",
+      covTone
+    );
+
+  Array.prototype.forEach.call(
+    el.accordions.querySelectorAll("details.acc"),
+    function (details) {
+      details.addEventListener("toggle", function () {
+        if (details.open) ensurePanel(details.getAttribute("data-panel"));
+      });
+    }
+  );
+}
+
+function accordionIssuesPageRef() {
+  return {
+    get: function () {
+      return state.issuesPage;
+    },
+    set: function (v) {
+      state.issuesPage = v;
+    },
+  };
+}
+
+function renderIssuesPanel() {
+  var body = el.accordions.querySelector('[data-body="issues"]');
+  if (!body) return;
+
+  var needsShell = !body.querySelector("[data-results]");
+  if (needsShell) {
+    body.innerHTML = issuesToolbarHtml({
+      query: "issue-q",
+      severity: "issue-sev",
+      strategy: "issue-strategy",
+    });
+
+    var q = body.querySelector("#issue-q");
+    var sev = body.querySelector("#issue-sev");
+    var strat = body.querySelector("#issue-strategy");
+    q.value = state.issueQuery;
+    sev.value = state.issueSeverity;
+    strat.value = state.issueStrategy;
+
+    q.addEventListener("input", function (e) {
+      state.issueQuery = e.target.value;
+      state.issuesPage = 0;
+      paintIssuesInto(
+        body,
+        {
+          query: state.issueQuery,
+          severity: state.issueSeverity,
+          strategy: state.issueStrategy,
+        },
+        accordionIssuesPageRef()
+      );
+    });
+    sev.addEventListener("change", function (e) {
+      state.issueSeverity = e.target.value;
+      state.issuesPage = 0;
+      paintIssuesInto(
+        body,
+        {
+          query: state.issueQuery,
+          severity: state.issueSeverity,
+          strategy: state.issueStrategy,
+        },
+        accordionIssuesPageRef()
+      );
+    });
+    strat.addEventListener("change", function (e) {
+      state.issueStrategy = e.target.value;
+      state.issuesPage = 0;
+      paintIssuesInto(
+        body,
+        {
+          query: state.issueQuery,
+          severity: state.issueSeverity,
+          strategy: state.issueStrategy,
+        },
+        accordionIssuesPageRef()
+      );
+    });
+  }
+
+  paintIssuesInto(
+    body,
+    {
+      query: state.issueQuery,
+      severity: state.issueSeverity,
+      strategy: state.issueStrategy,
+    },
+    accordionIssuesPageRef()
+  );
+}
+
+function renderFailedPanel() {
+  var body = el.accordions.querySelector('[data-body="failed"]');
+  if (!body) return;
+  body.innerHTML = failedHtml(state.report.failed);
+}
+
+function renderCoveragePanel() {
+  var body = el.accordions.querySelector('[data-body="coverage"]');
+  if (!body) return;
+
+  if (!state.report.coverage.length) {
+    body.innerHTML =
+      '<p class="empty">' +
+      (state.report.rawEmptyCoverage
+        ? "No coverage data found in the report."
+        : "No coverage rows to display.") +
+      "</p>";
+    return;
+  }
+
+  var needsShell = !body.querySelector("[data-cov-results]");
+  if (needsShell) {
+    body.innerHTML =
+      '<div class="acc__toolbar">' +
+      '<input class="field" id="cov-q" type="search" placeholder="Filter by file path…" autocomplete="off" />' +
+      '<select class="field select" id="cov-sort">' +
+      '<option value="lines-asc">Lowest lines %</option>' +
+      '<option value="lines-desc">Highest lines %</option>' +
+      '<option value="name">File name</option>' +
+      "</select>" +
+      "</div>" +
+      '<div class="acc__scroll" data-cov-results></div>' +
+      '<div class="pager" data-cov-pager></div>';
+
+    var q = body.querySelector("#cov-q");
+    var sort = body.querySelector("#cov-sort");
+    q.value = state.coverageQuery;
+    sort.value = state.coverageSort;
+
+    q.addEventListener("input", function (e) {
+      state.coverageQuery = e.target.value;
+      state.coveragePage = 0;
+      paintCoverageResults(body);
+    });
+    sort.addEventListener("change", function (e) {
+      state.coverageSort = e.target.value;
+      state.coveragePage = 0;
+      paintCoverageResults(body);
+    });
+  }
+
+  paintCoverageResults(body);
+}
+
+function paintCoverageResults(body) {
+  var rows = filteredCoverage();
+  var totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (state.coveragePage > totalPages - 1) state.coveragePage = totalPages - 1;
+  var start = state.coveragePage * PAGE_SIZE;
+  var pageRows = rows.slice(start, start + PAGE_SIZE);
+
+  var tableRows = pageRows
+    .map(function (row) {
+      function cell(pct) {
         return (
-          "<tr>" +
-          '<td class="path" title="' +
-          escapeHtml(row.file) +
+          '<td class="cov ' +
+          covClass(pct) +
           '">' +
-          escapeHtml(shortPath(row.file)) +
-          "</td>" +
-          cell(row.statements) +
-          cell(row.branches) +
-          cell(row.functions) +
-          cell(row.lines) +
-          "</tr>"
+          escapeHtml(pct) +
+          "%</td>"
         );
-      })
-      .join("");
+      }
+      return (
+        "<tr>" +
+        pathCopyCell(row.file) +
+        cell(row.statements) +
+        cell(row.branches) +
+        cell(row.functions) +
+        cell(row.lines) +
+        "</tr>"
+      );
+    })
+    .join("");
 
-    var results = body.querySelector("[data-cov-results]");
-    results.innerHTML = pageRows.length
-      ? '<div class="table-wrap"><table class="data data--coverage"><colgroup>' +
-        '<col class="col-file" /><col class="col-pct" /><col class="col-pct" />' +
-        '<col class="col-pct" /><col class="col-pct" />' +
-        "</colgroup><thead><tr>" +
-        "<th>File</th><th>Statements</th><th>Branches</th><th>Functions</th><th>Lines</th>" +
-        "</tr></thead><tbody>" +
-        tableRows +
-        "</tbody></table></div>"
-      : '<p class="empty">No coverage rows match this filter.</p>';
+  var results = body.querySelector("[data-cov-results]");
+  results.innerHTML = pageRows.length
+    ? '<div class="table-wrap"><table class="data data--coverage"><colgroup>' +
+      '<col class="col-file" /><col class="col-pct" /><col class="col-pct" />' +
+      '<col class="col-pct" /><col class="col-pct" />' +
+      "</colgroup><thead><tr>" +
+      "<th>File</th><th>Statements</th><th>Branches</th><th>Functions</th><th>Lines</th>" +
+      "</tr></thead><tbody>" +
+      tableRows +
+      "</tbody></table></div>"
+    : '<p class="empty">No coverage rows match this filter.</p>';
 
-    var pager = body.querySelector("[data-cov-pager]");
-    pager.innerHTML =
-      "<span>" +
-      rows.length +
-      " files · page " +
-      (state.coveragePage + 1) +
-      " / " +
-      totalPages +
-      "</span>" +
-      '<div class="pager__btns">' +
-      '<button type="button" class="btn btn--ghost" data-cov-prev' +
-      (state.coveragePage === 0 ? " disabled" : "") +
-      ">Prev</button>" +
-      '<button type="button" class="btn btn--ghost" data-cov-next' +
-      (state.coveragePage >= totalPages - 1 ? " disabled" : "") +
-      ">Next</button>" +
-      "</div>";
-
-    pager.querySelector("[data-cov-prev]").onclick = function () {
+  var pager = body.querySelector("[data-cov-pager]");
+  paintPager(
+    pager,
+    rows.length,
+    state.coveragePage,
+    function () {
       state.coveragePage = Math.max(0, state.coveragePage - 1);
       paintCoverageResults(body);
-    };
-    pager.querySelector("[data-cov-next]").onclick = function () {
+    },
+    function () {
       state.coveragePage += 1;
       paintCoverageResults(body);
-    };
-  }
-
-  function ensurePanel(id) {
-    if (id === "issues") renderIssuesPanel();
-    if (id === "failed") renderFailedPanel();
-    if (id === "coverage") renderCoveragePanel();
-  }
-
-  function showReport(report, filename) {
-    state.report = report;
-    state.filename = filename || "audit-report.md";
-    state.issuesPage = 0;
-    state.coveragePage = 0;
-    state.issueQuery = "";
-    state.issueSeverity = "all";
-    state.coverageQuery = "";
-    state.coverageSort = "lines-asc";
-
-    el.dropzone.hidden = true;
-    el.report.hidden = false;
-    el.expand.hidden = false;
-    el.collapse.hidden = false;
-
-    el.generated.textContent = report.generated
-      ? "Generated " + formatGenerated(report.generated)
-      : "Generated time not found in report";
-    el.filename.textContent = state.filename;
-
-    renderQualityHero(report.quality);
-    renderSummaryStrip(report.summary);
-    renderStrategies(report.strategies, report.issues);
-    buildAccordions(report);
-  }
-
-  function handleText(text, filename) {
-    try {
-      var report = parseReport(text);
-      if (!report.summary || Object.keys(report.summary).length === 0) {
-        throw new Error(
-          "Could not find a Summary section. Make sure this is a test-auditor audit-report.md file."
-        );
-      }
-      el.dropError.hidden = true;
-      showReport(report, filename);
-    } catch (err) {
-      el.dropError.hidden = false;
-      el.dropError.textContent = err.message || "Failed to parse report.";
     }
-  }
+  );
+}
 
-  function readFile(file) {
-    if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function () {
-      handleText(String(reader.result || ""), file.name);
-    };
-    reader.onerror = function () {
-      el.dropError.hidden = false;
-      el.dropError.textContent = "Could not read that file.";
-    };
-    reader.readAsText(file);
-  }
+function ensurePanel(id) {
+  if (id === "issues") renderIssuesPanel();
+  if (id === "failed") renderFailedPanel();
+  if (id === "coverage") renderCoveragePanel();
+}
 
-  // Drag & drop / picker
-  el.fileInput.addEventListener("change", function () {
-    readFile(el.fileInput.files && el.fileInput.files[0]);
-    el.fileInput.value = "";
-  });
+function showReport(report, filename) {
+  closeModal();
+  state.report = report;
+  state.filename = filename || "audit-report.md";
+  state.issuesPage = 0;
+  state.coveragePage = 0;
+  state.issueQuery = "";
+  state.issueSeverity = "all";
+  state.issueStrategy = "all";
+  state.coverageQuery = "";
+  state.coverageSort = "lines-asc";
 
-  ["dragenter", "dragover"].forEach(function (evt) {
-    el.dropzone.addEventListener(evt, function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      el.dropzone.classList.add("is-dragover");
-    });
-  });
+  el.dropzone.hidden = true;
+  el.report.hidden = false;
+  el.expand.hidden = false;
+  el.collapse.hidden = false;
 
-  ["dragleave", "drop"].forEach(function (evt) {
-    el.dropzone.addEventListener(evt, function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      el.dropzone.classList.remove("is-dragover");
-    });
-  });
+  el.generated.textContent = report.generated
+    ? "Generated " + formatGenerated(report.generated)
+    : "Generated time not found in report";
+  el.filename.textContent = state.filename;
 
-  el.dropzone.addEventListener("drop", function (e) {
-    var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    readFile(file);
-  });
+  renderQualityHero(report.quality);
+  renderSummaryStrip(report.summary);
+  renderStrategies(report.strategies, report.issues);
+  buildAccordions(report);
+}
 
-  el.dropzone.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      el.fileInput.click();
+function handleText(text, filename) {
+  try {
+    var report = parseReport(text);
+    if (!report.summary || Object.keys(report.summary).length === 0) {
+      throw new Error(
+        "Could not find a Summary section. Make sure this is a test-auditor audit-report.md file."
+      );
     }
-  });
-
-  el.expand.addEventListener("click", function () {
-    Array.prototype.forEach.call(
-      el.accordions.querySelectorAll("details.acc"),
-      function (d) {
-        d.open = true;
-      }
-    );
-  });
-
-  el.collapse.addEventListener("click", function () {
-    Array.prototype.forEach.call(
-      el.accordions.querySelectorAll("details.acc"),
-      function (d) {
-        d.open = false;
-      }
-    );
-  });
-
-  // When the CLI opens the viewer, it serves the report at /report.md.
-  // Also support ?file= when the page is served over http(s).
-  function tryAutoload() {
-    if (!/^https?:$/i.test(window.location.protocol)) return;
-
-    fetch("/report.md", { cache: "no-store" })
-      .then(function (res) {
-        if (!res.ok) throw new Error("no report");
-        return res.text();
-      })
-      .then(function (text) {
-        handleText(text, "audit-report.md");
-      })
-      .catch(function () {
-        try {
-          var params = new URLSearchParams(window.location.search);
-          var fileParam = params.get("file");
-          if (!fileParam) return;
-          return fetch(fileParam)
-            .then(function (res) {
-              if (!res.ok) throw new Error("HTTP " + res.status);
-              return res.text();
-            })
-            .then(function (text) {
-              handleText(text, fileParam);
-            });
-        } catch (e) {
-          /* ignore */
-        }
-      });
+    el.dropError.hidden = true;
+    showReport(report, filename);
+  } catch (err) {
+    el.dropError.hidden = false;
+    el.dropError.textContent = err.message || "Failed to parse report.";
   }
+}
 
-  tryAutoload();
-})();
+function readFile(file) {
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    handleText(String(reader.result || ""), file.name);
+  };
+  reader.onerror = function () {
+    el.dropError.hidden = false;
+    el.dropError.textContent = "Could not read that file.";
+  };
+  reader.readAsText(file);
+}
+
+el.fileInput.addEventListener("change", function () {
+  readFile(el.fileInput.files && el.fileInput.files[0]);
+  el.fileInput.value = "";
+});
+
+["dragenter", "dragover"].forEach(function (evt) {
+  el.dropzone.addEventListener(evt, function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    el.dropzone.classList.add("is-dragover");
+  });
+});
+
+["dragleave", "drop"].forEach(function (evt) {
+  el.dropzone.addEventListener(evt, function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    el.dropzone.classList.remove("is-dragover");
+  });
+});
+
+el.dropzone.addEventListener("drop", function (e) {
+  var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  readFile(file);
+});
+
+el.dropzone.addEventListener("keydown", function (e) {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    el.fileInput.click();
+  }
+});
+
+el.expand.addEventListener("click", function () {
+  Array.prototype.forEach.call(
+    el.accordions.querySelectorAll("details.acc"),
+    function (d) {
+      d.open = true;
+    }
+  );
+});
+
+el.collapse.addEventListener("click", function () {
+  Array.prototype.forEach.call(
+    el.accordions.querySelectorAll("details.acc"),
+    function (d) {
+      d.open = false;
+    }
+  );
+});
+
+if (el.modal) {
+  Array.prototype.forEach.call(
+    el.modal.querySelectorAll("[data-modal-dismiss]"),
+    function (node) {
+      node.addEventListener("click", closeModal);
+    }
+  );
+}
+
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && state.modal) closeModal();
+});
+
+document.addEventListener("click", function (e) {
+  var cell = e.target.closest && e.target.closest("[data-copy-path]");
+  if (!cell) return;
+  e.preventDefault();
+  copyPathToClipboard(cell.getAttribute("data-copy-path") || "", cell);
+});
+
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  var cell = e.target.closest && e.target.closest("[data-copy-path]");
+  if (!cell) return;
+  e.preventDefault();
+  copyPathToClipboard(cell.getAttribute("data-copy-path") || "", cell);
+});
+
+window.addEventListener("scroll", hideTip, true);
+window.addEventListener("resize", hideTip);
+
+function tryAutoload() {
+  if (!/^https?:$/i.test(window.location.protocol)) return;
+
+  fetch("/report.md", { cache: "no-store" })
+    .then(function (res) {
+      if (!res.ok) throw new Error("no report");
+      return res.text();
+    })
+    .then(function (text) {
+      handleText(text, "audit-report.md");
+    })
+    .catch(function () {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var fileParam = params.get("file");
+        if (!fileParam) return;
+        return fetch(fileParam)
+          .then(function (res) {
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            return res.text();
+          })
+          .then(function (text) {
+            handleText(text, fileParam);
+          });
+      } catch (e) {
+        /* ignore */
+      }
+    });
+}
+
+tryAutoload();

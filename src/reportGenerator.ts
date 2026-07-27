@@ -79,6 +79,18 @@ export function generateMarkdownReport(report: AuditReport, outputPath: string) 
     }
   }
 
+  md += `## Test Cases\n\n`;
+  const cases = runSummary.testCases ?? [];
+  if (cases.length === 0) {
+    md += `No individual test cases were captured from Jest JSON.\n\n`;
+  } else {
+    md += `| File | Test | Status |\n|---|---|---|\n`;
+    for (const c of cases) {
+      md += `| ${escCell(c.file)} | ${escCell(c.name)} | ${escCell(c.status)} |\n`;
+    }
+    md += `\n`;
+  }
+
   md += `## Coverage\n\n`;
   if (coverage.length === 0) {
     md += `No coverage data found. The auditor runs Jest with \`--coverage\` and forces \`json-summary\`/\`json\` reporters; check that Jest can collect coverage in this project.\n\n`;

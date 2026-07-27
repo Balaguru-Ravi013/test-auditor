@@ -30,8 +30,7 @@ async function openBrowser(url: string): Promise<void> {
   } else {
     await execa('xdg-open', [url], { reject: false });
   }
-}
-
+} 
 function waitForExit(): Promise<void> {
   return new Promise((resolve) => {
     const done = () => resolve();

@@ -79,6 +79,37 @@
       </section>
     </main>
 
-    <script src="./app.js" defer></script>
+    <div
+      id="detail-modal"
+      class="modal"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      <div class="modal__backdrop" data-modal-dismiss tabindex="-1"></div>
+      <div class="modal__panel" role="document">
+        <header class="modal__head">
+          <div class="modal__head-text">
+            <h2 id="modal-title" class="modal__title">Details</h2>
+            <p id="modal-sub" class="modal__sub"></p>
+          </div>
+          <button
+            type="button"
+            id="modal-close"
+            class="modal__close"
+            aria-label="Close"
+            data-modal-dismiss
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div id="modal-body" class="modal__body"></div>
+      </div>
+    </div>
+
+    <div id="floating-tip" class="floating-tip" role="tooltip" hidden></div>
+
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
