@@ -1,11 +1,51 @@
 export const PAGE_SIZE = 50;
 
 /* Plain-language help for stakeholders + engineers */
+export const CMS_CATEGORY_INFO = {
+  legacy: {
+    title: "Legacy",
+    blurb: "References to the source CMS (imports, mocks, strings, fixtures) still present in unit tests.",
+  },
+  gap: {
+    title: "Gap",
+    blurb: "Source CMS usage without matching target CMS mocks/imports — migration incomplete for that file.",
+  },
+  progress: {
+    title: "Progress",
+    blurb: "Both source and target CMS patterns appear — partial migration in progress.",
+  },
+};
+
+export const COMPLETENESS_TAG_INFO = {
+  missing: {
+    title: "Missing",
+    blurb: "No matching unit test found for this source module.",
+  },
+  "weak-coverage": {
+    title: "Weak coverage",
+    blurb: "Tests exist but line coverage is low — expand edge and error paths.",
+  },
+  "perf-risk": {
+    title: "Perf / loading",
+    blurb: "Loading or performance-sensitive pattern that unit tests should also guard.",
+  },
+};
+
 export const METRIC_HELP = {
   Score:
     "Overall suite health from 0–100. Starts at 100, then drops for static findings (errors cost more), failing tests, and low average line coverage.",
+  Readiness:
+    "CMS migration readiness from 0–100. Separate from Quality Score. Deducts for legacy CMS refs in tests; small bonus when target CMS patterns also appear.",
+  Completeness:
+    "How completely application source modules are covered by unit tests (0–100). Separate from Quality Score. Deducts for untested pages/APIs/components and weak coverage.",
   Grade:
     "Letter grade from the score: A ≥90, B ≥80, C ≥70, D ≥55, F below 55. Use it as a quick “how healthy is this suite?” signal.",
+  "Legacy refs":
+    "Number of test files that still reference the source (legacy) CMS via imports, mocks, strings, or fixture paths.",
+  Untested:
+    "Application source modules with no matching unit test file (by name, folder, or import). Click the Missing tests accordion for what to write.",
+  "High-risk gaps":
+    "High-priority completeness recommendations — usually untested pages/APIs or modules with loading/performance risks.",
   "Total tests":
     "Every test Jest registered: passed + failed + pending + todo. That is why Total is often larger than Passed + Failed alone.",
   Passed:
@@ -203,6 +243,60 @@ export function severityPill(severity) {
   );
 }
 
+export function cmsCategoryPill(category) {
+  var cat = String(category || "").toLowerCase();
+  var meta = CMS_CATEGORY_INFO[cat];
+  var tone =
+    cat === "legacy" ? "warning" : cat === "gap" ? "error" : cat === "progress" ? "ok" : "info";
+  return (
+    '<span class="pill pill--' +
+    tone +
+    '" title="' +
+    escapeHtml(meta ? meta.blurb : "") +
+    '">' +
+    escapeHtml(meta ? meta.title : cat || "—") +
+    "</span>"
+  );
+}
+
+export function cmsCategoryMeta(category) {
+  var cat = String(category || "").toLowerCase();
+  return (
+    CMS_CATEGORY_INFO[cat] || {
+      title: cat || "—",
+      blurb: "CMS migration finding category.",
+    }
+  );
+}
+
+export function completenessTagPill(tag) {
+  var t = String(tag || "").toLowerCase();
+  var meta = COMPLETENESS_TAG_INFO[t];
+  var tone =
+    t === "missing" ? "error" : t === "weak-coverage" ? "warning" : t === "perf-risk" ? "info" : "info";
+  return (
+    '<span class="pill pill--' +
+    tone +
+    '" title="' +
+    escapeHtml(meta ? meta.blurb : "") +
+    '">' +
+    escapeHtml(meta ? meta.title : t || "—") +
+    "</span>"
+  );
+}
+
+export function priorityPill(priority) {
+  var p = String(priority || "").toLowerCase();
+  var tone = p === "high" ? "error" : p === "medium" ? "warning" : "info";
+  return (
+    '<span class="pill pill--' +
+    tone +
+    '">' +
+    escapeHtml(p || "—") +
+    "</span>"
+  );
+}
+
 export function statusPill(status) {
   var s = normalizeTestStatus(status);
   var tone =
@@ -230,7 +324,7 @@ export function statusMatchesFilter(status, filter) {
 }
 
 export function metricTone(key, value) {
-  if (key === "Score") {
+  if (key === "Score" || key === "Readiness" || key === "Completeness") {
     var score = parseInt(String(value), 10);
     if (isNaN(score)) return "neutral";
     if (score >= 80) return "ok";
@@ -247,7 +341,14 @@ export function metricTone(key, value) {
   if (key === "Failed" || key === "Static errors") {
     return Number(String(value).replace(/,/g, "")) > 0 ? "bad" : "ok";
   }
-  if (key === "Static warnings" || key === "Pending" || key === "Todo") {
+  if (
+    key === "Static warnings" ||
+    key === "Pending" ||
+    key === "Todo" ||
+    key === "Legacy refs" ||
+    key === "Untested" ||
+    key === "High-risk gaps"
+  ) {
     return Number(String(value).replace(/,/g, "")) > 0 ? "warn" : "neutral";
   }
   if (key === "Total tests") return "neutral";

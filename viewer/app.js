@@ -5,6 +5,10 @@ import {
   shortPath,
   strategyMeta,
   severityPill,
+  cmsCategoryPill,
+  cmsCategoryMeta,
+  completenessTagPill,
+  priorityPill,
   statusPill,
   statusMatchesFilter,
   metricTone,
@@ -19,10 +23,19 @@ var state = {
   report: null,
   filename: "",
   issuesPage: 0,
+  cmsIssuesPage: 0,
+  completenessPage: 0,
   coveragePage: 0,
   issueQuery: "",
   issueSeverity: "all",
   issueStrategy: "all",
+  cmsQuery: "",
+  cmsSeverity: "all",
+  cmsCategory: "all",
+  completenessQuery: "",
+  completenessPriority: "all",
+  completenessKind: "all",
+  completenessTag: "all",
   coverageQuery: "",
   coverageSort: "lines-asc",
   modal: null,
@@ -36,6 +49,8 @@ var el = {
   generated: document.getElementById("report-generated"),
   filename: document.getElementById("report-filename"),
   qualityHero: document.getElementById("quality-hero"),
+  cmsHero: document.getElementById("cms-migration-hero"),
+  completenessHero: document.getElementById("completeness-hero"),
   summary: document.getElementById("summary-strip"),
   strategies: document.getElementById("strategies"),
   accordions: document.getElementById("accordions"),
@@ -688,7 +703,144 @@ function renderQualityHero(quality) {
   bindTipEvents(el.qualityHero);
 }
 
-function renderSummaryStrip(summary) {
+function renderCmsMigrationHero(cms) {
+  if (!el.cmsHero) return;
+  if (!cms || !cms.readiness) {
+    el.cmsHero.hidden = true;
+    el.cmsHero.innerHTML = "";
+    return;
+  }
+  var gradeRaw = String(cms.grade || "");
+  var grade = gradeRaw.charAt(0) || "–";
+  var gradeLabelMatch = gradeRaw.match(/\(([^)]+)\)/);
+  var gradeLabel = gradeLabelMatch
+    ? gradeLabelMatch[1]
+    : gradeRaw.replace(/^[A-F]\s*/, "").trim();
+  var tone = metricTone("Grade", grade);
+  var scoreTone = metricTone("Readiness", cms.readiness);
+  var scoreNum = String(cms.readiness).replace(/\/100$/, "");
+  var fromLabel = cms.from.displayName || cms.from.id || "Source";
+  var toLabel = cms.to.displayName || cms.to.id || "Target";
+
+  el.cmsHero.hidden = false;
+  el.cmsHero.innerHTML =
+    '<div class="quality-hero__glow cms-hero__glow" aria-hidden="true"></div>' +
+    '<div class="quality-hero__score metric--' +
+    scoreTone +
+    '">' +
+    '<p class="quality-hero__eyebrow">CMS readiness' +
+    infoButton("Readiness") +
+    "</p>" +
+    '<p class="quality-hero__number">' +
+    escapeHtml(scoreNum) +
+    '<span class="quality-hero__of">/100</span></p>' +
+    "</div>" +
+    '<div class="quality-hero__grade metric--' +
+    tone +
+    '">' +
+    '<p class="quality-hero__eyebrow">Grade' +
+    infoButton("Grade") +
+    "</p>" +
+    '<p class="quality-hero__letter">' +
+    escapeHtml(grade) +
+    "</p>" +
+    '<p class="quality-hero__label">' +
+    escapeHtml(gradeLabel) +
+    "</p>" +
+    "</div>" +
+    '<div class="quality-hero__copy">' +
+    '<p class="cms-hero__route">' +
+    '<span class="cms-badge">' +
+    escapeHtml(fromLabel) +
+    "</span>" +
+    '<span class="cms-hero__arrow" aria-hidden="true">→</span>' +
+    '<span class="cms-badge cms-badge--target">' +
+    escapeHtml(toLabel) +
+    "</span>" +
+    "</p>" +
+    "<p>" +
+    escapeHtml(
+      cms.summary ||
+        "How ready unit tests are for the CMS migration (separate from Quality Score)."
+    ) +
+    "</p>" +
+    '<p class="quality-hero__note">CMS findings do not change the Quality Score — they are scored separately as migration readiness.</p>' +
+    "</div>";
+  bindTipEvents(el.cmsHero);
+}
+
+function renderCompletenessHero(comp) {
+  if (!el.completenessHero) return;
+  if (!comp || !comp.score) {
+    el.completenessHero.hidden = true;
+    el.completenessHero.innerHTML = "";
+    return;
+  }
+  var gradeRaw = String(comp.grade || "");
+  var grade = gradeRaw.charAt(0) || "–";
+  var gradeLabelMatch = gradeRaw.match(/\(([^)]+)\)/);
+  var gradeLabel = gradeLabelMatch
+    ? gradeLabelMatch[1]
+    : gradeRaw.replace(/^[A-F]\s*/, "").trim();
+  var tone = metricTone("Grade", grade);
+  var scoreTone = metricTone("Completeness", comp.score);
+  var scoreNum = String(comp.score).replace(/\/100$/, "");
+  var scanned = comp.sourcesScanned || "0";
+  var withTests = comp.withTests || "0";
+  var untested = comp.untested || "0";
+
+  el.completenessHero.hidden = false;
+  el.completenessHero.innerHTML =
+    '<div class="quality-hero__glow completeness-hero__glow" aria-hidden="true"></div>' +
+    '<div class="quality-hero__score metric--' +
+    scoreTone +
+    '">' +
+    '<p class="quality-hero__eyebrow">Test completeness' +
+    infoButton("Completeness") +
+    "</p>" +
+    '<p class="quality-hero__number">' +
+    escapeHtml(scoreNum) +
+    '<span class="quality-hero__of">/100</span></p>' +
+    "</div>" +
+    '<div class="quality-hero__grade metric--' +
+    tone +
+    '">' +
+    '<p class="quality-hero__eyebrow">Grade' +
+    infoButton("Grade") +
+    "</p>" +
+    '<p class="quality-hero__letter">' +
+    escapeHtml(grade) +
+    "</p>" +
+    '<p class="quality-hero__label">' +
+    escapeHtml(gradeLabel) +
+    "</p>" +
+    "</div>" +
+    '<div class="quality-hero__copy">' +
+    '<p class="cms-hero__route">' +
+    '<span class="cms-badge">' +
+    escapeHtml(String(scanned)) +
+    " scanned</span>" +
+    '<span class="cms-hero__arrow" aria-hidden="true">·</span>' +
+    '<span class="cms-badge cms-badge--target">' +
+    escapeHtml(String(withTests)) +
+    " with tests</span>" +
+    '<span class="cms-hero__arrow" aria-hidden="true">·</span>' +
+    '<span class="cms-badge">' +
+    escapeHtml(String(untested)) +
+    " untested</span>" +
+    "</p>" +
+    "<p>" +
+    escapeHtml(
+      comp.summary ||
+        "Which app modules still need unit tests — separate from Quality Score."
+    ) +
+    "</p>" +
+    '<p class="quality-hero__note">Jest shows what ran. Completeness shows what is still missing and what to write next.</p>' +
+    "</div>";
+  bindTipEvents(el.completenessHero);
+}
+
+function renderSummaryStrip(summary, cms, completeness) {
   var order = [
     "Total tests",
     "Passed",
@@ -704,6 +856,29 @@ function renderSummaryStrip(summary) {
     if (!(key in summary)) return;
     html += metricCard(key, summary[key], key, !!METRIC_MODAL[key]);
   });
+  if (cms && cms.filesWithLegacyRefs !== undefined && cms.filesWithLegacyRefs !== "") {
+    html += metricCard(
+      "Legacy refs",
+      cms.filesWithLegacyRefs,
+      "Legacy refs",
+      false
+    );
+  }
+  if (completeness && completeness.untested !== undefined && completeness.untested !== "") {
+    html += metricCard("Untested", completeness.untested, "Untested", false);
+  }
+  if (
+    completeness &&
+    completeness.highPriority !== undefined &&
+    completeness.highPriority !== ""
+  ) {
+    html += metricCard(
+      "High-risk gaps",
+      completeness.highPriority,
+      "High-risk gaps",
+      false
+    );
+  }
   el.summary.innerHTML = html;
   bindTipEvents(el.summary);
 
@@ -1031,7 +1206,7 @@ function buildAccordions(report) {
   var failTone = failedTests > 0 ? "bad" : "ok";
   var covTone = report.coverage.length > 0 ? "ok" : "warn";
 
-  el.accordions.innerHTML =
+  var html =
     accordionShell(
       "issues",
       "Static Analysis Issues",
@@ -1054,14 +1229,83 @@ function buildAccordions(report) {
         (failedFiles === 1 ? "" : "s"),
       String(failedTests),
       failTone
-    ) +
-    accordionShell(
-      "coverage",
-      "Coverage",
-      "Per-file statements, branches, functions, lines",
-      report.coverage.length ? String(report.coverage.length) + " files" : "n/a",
-      covTone
     );
+
+  if (report.cmsMigration) {
+    var cmsIssues = report.cmsMigration.issues || [];
+    var legacyN = cmsIssues.filter(function (i) {
+      return i.category === "legacy";
+    }).length;
+    var gapN = cmsIssues.filter(function (i) {
+      return i.category === "gap";
+    }).length;
+    var progressN = cmsIssues.filter(function (i) {
+      return i.category === "progress";
+    }).length;
+    var cmsTone = legacyN > 0 ? "warn" : gapN > 0 ? "warn" : "ok";
+    var fromName =
+      (report.cmsMigration.from && report.cmsMigration.from.displayName) ||
+      "source";
+    var toName =
+      (report.cmsMigration.to && report.cmsMigration.to.displayName) || "target";
+    html += accordionShell(
+      "cms",
+      "CMS Migration findings",
+      fromName +
+        " → " +
+        toName +
+        " · " +
+        legacyN +
+        " legacy · " +
+        gapN +
+        " gap · " +
+        progressN +
+        " progress",
+      String(cmsIssues.length),
+      cmsTone
+    );
+  }
+
+  if (report.testCompleteness) {
+    var recs = report.testCompleteness.recommendations || [];
+    var missingN = recs.filter(function (r) {
+      return r.tag === "missing";
+    }).length;
+    var weakN = recs.filter(function (r) {
+      return r.tag === "weak-coverage";
+    }).length;
+    var perfN = recs.filter(function (r) {
+      return r.tag === "perf-risk";
+    }).length;
+    var highN = recs.filter(function (r) {
+      return r.priority === "high";
+    }).length;
+    var compTone = highN > 0 || missingN > 0 ? "warn" : recs.length ? "warn" : "ok";
+    html += accordionShell(
+      "completeness",
+      "Missing tests / recommendations",
+      missingN +
+        " missing · " +
+        weakN +
+        " weak coverage · " +
+        perfN +
+        " perf/loading · " +
+        highN +
+        " high priority",
+      String(recs.length),
+      compTone
+    );
+  }
+
+  html += accordionShell(
+    "coverage",
+    "Coverage",
+    "Per-file statements, branches, functions, lines",
+    report.coverage.length ? String(report.coverage.length) + " files" : "n/a",
+    covTone
+  );
+
+  el.accordions.innerHTML = html;
 
   Array.prototype.forEach.call(
     el.accordions.querySelectorAll("details.acc"),
@@ -1270,7 +1514,462 @@ function paintCoverageResults(body) {
 function ensurePanel(id) {
   if (id === "issues") renderIssuesPanel();
   if (id === "failed") renderFailedPanel();
+  if (id === "cms") renderCmsPanel();
+  if (id === "completeness") renderCompletenessPanel();
   if (id === "coverage") renderCoveragePanel();
+}
+
+function filterCmsIssues(opts) {
+  opts = opts || {};
+  var q = String(opts.query || "").trim().toLowerCase();
+  var severity = opts.severity || "all";
+  var category = opts.category || "all";
+  var list =
+    (state.report &&
+      state.report.cmsMigration &&
+      state.report.cmsMigration.issues) ||
+    [];
+  return list.filter(function (issue) {
+    if (severity !== "all" && String(issue.severity).toLowerCase() !== severity) {
+      return false;
+    }
+    if (category !== "all" && String(issue.category).toLowerCase() !== category) {
+      return false;
+    }
+    if (!q) return true;
+    var hay = [
+      issue.file,
+      issue.rule,
+      issue.category,
+      issue.cmsId,
+      issue.message,
+      issue.severity,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.indexOf(q) !== -1;
+  });
+}
+
+function cmsToolbarHtml(ids) {
+  return (
+    '<div class="acc__toolbar">' +
+    '<input class="field" id="' +
+    ids.query +
+    '" type="search" placeholder="Search file, rule, category, message…" autocomplete="off" />' +
+    '<select class="field select" id="' +
+    ids.severity +
+    '">' +
+    '<option value="all">All severities</option>' +
+    '<option value="error">Errors</option>' +
+    '<option value="warning">Warnings</option>' +
+    '<option value="info">Info</option>' +
+    "</select>" +
+    '<select class="field select" id="' +
+    ids.category +
+    '">' +
+    '<option value="all">All categories</option>' +
+    '<option value="legacy">Legacy</option>' +
+    '<option value="gap">Gap</option>' +
+    '<option value="progress">Progress</option>' +
+    "</select>" +
+    "</div>" +
+    '<div class="acc__scroll" data-results></div>' +
+    '<div class="pager" data-pager></div>'
+  );
+}
+
+function accordionCmsPageRef() {
+  return {
+    get: function () {
+      return state.cmsIssuesPage;
+    },
+    set: function (v) {
+      state.cmsIssuesPage = v;
+    },
+  };
+}
+
+function paintCmsIssuesInto(root, filterState, pageRef) {
+  var rows = filterCmsIssues(filterState);
+  var page = pageRef.get();
+  var totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (page > totalPages - 1) page = totalPages - 1;
+  pageRef.set(page);
+  var start = page * PAGE_SIZE;
+  var pageRows = rows.slice(start, start + PAGE_SIZE);
+
+  var tableRows = pageRows
+    .map(function (issue) {
+      var catMeta = cmsCategoryMeta(issue.category);
+      return (
+        "<tr>" +
+        pathCopyCell(issue.file) +
+        "<td>" +
+        escapeHtml(issue.line) +
+        "</td>" +
+        '<td title="' +
+        escapeHtml(catMeta.blurb) +
+        '">' +
+        cmsCategoryPill(issue.category) +
+        "</td>" +
+        '<td class="mono">' +
+        escapeHtml(issue.rule) +
+        "</td>" +
+        "<td>" +
+        severityPill(issue.severity) +
+        "</td>" +
+        '<td class="mono">' +
+        escapeHtml(issue.cmsId) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(issue.message) +
+        "</td>" +
+        "</tr>"
+      );
+    })
+    .join("");
+
+  var results = root.querySelector("[data-results]");
+  results.innerHTML = pageRows.length
+    ? '<div class="table-wrap"><table class="data data--issues"><colgroup>' +
+      '<col class="col-file" /><col class="col-line" /><col class="col-strategy" />' +
+      '<col class="col-rule" /><col class="col-sev" /><col class="col-rule" /><col class="col-msg" />' +
+      "</colgroup><thead><tr>" +
+      "<th>File</th><th>Line</th><th>Category</th><th>Rule</th><th>Severity</th><th>CMS</th><th>Message</th>" +
+      "</tr></thead><tbody>" +
+      tableRows +
+      "</tbody></table></div>"
+    : '<p class="empty">No CMS findings match this filter.</p>';
+
+  var pager = root.querySelector("[data-pager]");
+  paintPager(
+    pager,
+    rows.length,
+    page,
+    function () {
+      pageRef.set(Math.max(0, pageRef.get() - 1));
+      paintCmsIssuesInto(root, filterState, pageRef);
+    },
+    function () {
+      pageRef.set(pageRef.get() + 1);
+      paintCmsIssuesInto(root, filterState, pageRef);
+    }
+  );
+
+  Array.prototype.forEach.call(
+    results.querySelectorAll("[data-copy-path]"),
+    function (cell) {
+      if (cell.getAttribute("data-copy-bound")) return;
+      cell.setAttribute("data-copy-bound", "1");
+      cell.addEventListener("click", function () {
+        copyPathToClipboard(cell.getAttribute("data-copy-path"), cell);
+      });
+      cell.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          copyPathToClipboard(cell.getAttribute("data-copy-path"), cell);
+        }
+      });
+    }
+  );
+}
+
+function renderCmsPanel() {
+  var body = el.accordions.querySelector('[data-body="cms"]');
+  if (!body) return;
+
+  if (
+    !state.report.cmsMigration ||
+    !(state.report.cmsMigration.issues || []).length
+  ) {
+    body.innerHTML =
+      '<p class="empty">No CMS migration findings in this report.</p>';
+    return;
+  }
+
+  var needsShell = !body.querySelector("[data-results]");
+  if (needsShell) {
+    body.innerHTML = cmsToolbarHtml({
+      query: "cms-q",
+      severity: "cms-sev",
+      category: "cms-cat",
+    });
+
+    var q = body.querySelector("#cms-q");
+    var sev = body.querySelector("#cms-sev");
+    var cat = body.querySelector("#cms-cat");
+    q.value = state.cmsQuery;
+    sev.value = state.cmsSeverity;
+    cat.value = state.cmsCategory;
+
+    q.addEventListener("input", function (e) {
+      state.cmsQuery = e.target.value;
+      state.cmsIssuesPage = 0;
+      paintCmsIssuesInto(
+        body,
+        {
+          query: state.cmsQuery,
+          severity: state.cmsSeverity,
+          category: state.cmsCategory,
+        },
+        accordionCmsPageRef()
+      );
+    });
+    sev.addEventListener("change", function (e) {
+      state.cmsSeverity = e.target.value;
+      state.cmsIssuesPage = 0;
+      paintCmsIssuesInto(
+        body,
+        {
+          query: state.cmsQuery,
+          severity: state.cmsSeverity,
+          category: state.cmsCategory,
+        },
+        accordionCmsPageRef()
+      );
+    });
+    cat.addEventListener("change", function (e) {
+      state.cmsCategory = e.target.value;
+      state.cmsIssuesPage = 0;
+      paintCmsIssuesInto(
+        body,
+        {
+          query: state.cmsQuery,
+          severity: state.cmsSeverity,
+          category: state.cmsCategory,
+        },
+        accordionCmsPageRef()
+      );
+    });
+  }
+
+  paintCmsIssuesInto(
+    body,
+    {
+      query: state.cmsQuery,
+      severity: state.cmsSeverity,
+      category: state.cmsCategory,
+    },
+    accordionCmsPageRef()
+  );
+}
+
+function filterCompletenessRecs(opts) {
+  opts = opts || {};
+  var q = String(opts.query || "").trim().toLowerCase();
+  var priority = opts.priority || "all";
+  var kind = opts.kind || "all";
+  var tag = opts.tag || "all";
+  var list =
+    (state.report &&
+      state.report.testCompleteness &&
+      state.report.testCompleteness.recommendations) ||
+    [];
+  return list.filter(function (rec) {
+    if (priority !== "all" && String(rec.priority).toLowerCase() !== priority) {
+      return false;
+    }
+    if (kind !== "all" && String(rec.kind).toLowerCase() !== kind) {
+      return false;
+    }
+    if (tag !== "all" && String(rec.tag).toLowerCase() !== tag) {
+      return false;
+    }
+    if (!q) return true;
+    var hay = [rec.source, rec.kind, rec.priority, rec.tag, rec.why, rec.suggest]
+      .join(" ")
+      .toLowerCase();
+    return hay.indexOf(q) !== -1;
+  });
+}
+
+function completenessToolbarHtml(ids) {
+  return (
+    '<div class="acc__toolbar">' +
+    '<input class="field" id="' +
+    ids.query +
+    '" type="search" placeholder="Search source, why, suggest…" autocomplete="off" />' +
+    '<select class="field select" id="' +
+    ids.priority +
+    '">' +
+    '<option value="all">All priorities</option>' +
+    '<option value="high">High</option>' +
+    '<option value="medium">Medium</option>' +
+    '<option value="low">Low</option>' +
+    "</select>" +
+    '<select class="field select" id="' +
+    ids.kind +
+    '">' +
+    '<option value="all">All kinds</option>' +
+    '<option value="page">Page</option>' +
+    '<option value="api">API</option>' +
+    '<option value="component">Component</option>' +
+    '<option value="hook">Hook</option>' +
+    '<option value="service">Service</option>' +
+    '<option value="util">Util</option>' +
+    '<option value="other">Other</option>' +
+    "</select>" +
+    '<select class="field select" id="' +
+    ids.tag +
+    '">' +
+    '<option value="all">All tags</option>' +
+    '<option value="missing">Missing</option>' +
+    '<option value="weak-coverage">Weak coverage</option>' +
+    '<option value="perf-risk">Perf / loading</option>' +
+    "</select>" +
+    "</div>" +
+    '<div class="acc__scroll" data-results></div>' +
+    '<div class="pager" data-pager></div>'
+  );
+}
+
+function accordionCompletenessPageRef() {
+  return {
+    get: function () {
+      return state.completenessPage;
+    },
+    set: function (v) {
+      state.completenessPage = v;
+    },
+  };
+}
+
+function paintCompletenessInto(root, filterState, pageRef) {
+  var rows = filterCompletenessRecs(filterState);
+  var page = pageRef.get();
+  var totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (page > totalPages - 1) page = totalPages - 1;
+  pageRef.set(page);
+  var start = page * PAGE_SIZE;
+  var pageRows = rows.slice(start, start + PAGE_SIZE);
+
+  var tableRows = pageRows
+    .map(function (rec) {
+      return (
+        "<tr>" +
+        pathCopyCell(rec.source) +
+        "<td>" +
+        escapeHtml(rec.kind) +
+        "</td>" +
+        "<td>" +
+        priorityPill(rec.priority) +
+        "</td>" +
+        "<td>" +
+        completenessTagPill(rec.tag) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(rec.why) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(rec.suggest) +
+        "</td>" +
+        "</tr>"
+      );
+    })
+    .join("");
+
+  var results = root.querySelector("[data-results]");
+  results.innerHTML = pageRows.length
+    ? '<div class="table-wrap"><table class="data data--issues"><thead><tr>' +
+      "<th>Source</th><th>Kind</th><th>Priority</th><th>Tag</th><th>Why</th><th>Suggest</th>" +
+      "</tr></thead><tbody>" +
+      tableRows +
+      "</tbody></table></div>"
+    : '<p class="empty">No recommendations match this filter.</p>';
+
+  var pager = root.querySelector("[data-pager]");
+  paintPager(
+    pager,
+    rows.length,
+    page,
+    function () {
+      pageRef.set(Math.max(0, pageRef.get() - 1));
+      paintCompletenessInto(root, filterState, pageRef);
+    },
+    function () {
+      pageRef.set(pageRef.get() + 1);
+      paintCompletenessInto(root, filterState, pageRef);
+    }
+  );
+}
+
+function renderCompletenessPanel() {
+  var body = el.accordions.querySelector('[data-body="completeness"]');
+  if (!body) return;
+
+  if (
+    !state.report.testCompleteness ||
+    !(state.report.testCompleteness.recommendations || []).length
+  ) {
+    body.innerHTML =
+      '<p class="empty">No completeness recommendations in this report.</p>';
+    return;
+  }
+
+  var needsShell = !body.querySelector("[data-results]");
+  if (needsShell) {
+    body.innerHTML = completenessToolbarHtml({
+      query: "comp-q",
+      priority: "comp-pri",
+      kind: "comp-kind",
+      tag: "comp-tag",
+    });
+
+    var q = body.querySelector("#comp-q");
+    var pri = body.querySelector("#comp-pri");
+    var kind = body.querySelector("#comp-kind");
+    var tag = body.querySelector("#comp-tag");
+    q.value = state.completenessQuery;
+    pri.value = state.completenessPriority;
+    kind.value = state.completenessKind;
+    tag.value = state.completenessTag;
+
+    function repaint() {
+      paintCompletenessInto(
+        body,
+        {
+          query: state.completenessQuery,
+          priority: state.completenessPriority,
+          kind: state.completenessKind,
+          tag: state.completenessTag,
+        },
+        accordionCompletenessPageRef()
+      );
+    }
+
+    q.addEventListener("input", function (e) {
+      state.completenessQuery = e.target.value;
+      state.completenessPage = 0;
+      repaint();
+    });
+    pri.addEventListener("change", function (e) {
+      state.completenessPriority = e.target.value;
+      state.completenessPage = 0;
+      repaint();
+    });
+    kind.addEventListener("change", function (e) {
+      state.completenessKind = e.target.value;
+      state.completenessPage = 0;
+      repaint();
+    });
+    tag.addEventListener("change", function (e) {
+      state.completenessTag = e.target.value;
+      state.completenessPage = 0;
+      repaint();
+    });
+  }
+
+  paintCompletenessInto(
+    body,
+    {
+      query: state.completenessQuery,
+      priority: state.completenessPriority,
+      kind: state.completenessKind,
+      tag: state.completenessTag,
+    },
+    accordionCompletenessPageRef()
+  );
 }
 
 function showReport(report, filename) {
@@ -1278,10 +1977,19 @@ function showReport(report, filename) {
   state.report = report;
   state.filename = filename || "audit-report.md";
   state.issuesPage = 0;
+  state.cmsIssuesPage = 0;
+  state.completenessPage = 0;
   state.coveragePage = 0;
   state.issueQuery = "";
   state.issueSeverity = "all";
   state.issueStrategy = "all";
+  state.cmsQuery = "";
+  state.cmsSeverity = "all";
+  state.cmsCategory = "all";
+  state.completenessQuery = "";
+  state.completenessPriority = "all";
+  state.completenessKind = "all";
+  state.completenessTag = "all";
   state.coverageQuery = "";
   state.coverageSort = "lines-asc";
 
@@ -1296,7 +2004,13 @@ function showReport(report, filename) {
   el.filename.textContent = state.filename;
 
   renderQualityHero(report.quality);
-  renderSummaryStrip(report.summary);
+  renderCmsMigrationHero(report.cmsMigration);
+  renderCompletenessHero(report.testCompleteness);
+  renderSummaryStrip(
+    report.summary,
+    report.cmsMigration,
+    report.testCompleteness
+  );
   renderStrategies(report.strategies, report.issues);
   buildAccordions(report);
 }

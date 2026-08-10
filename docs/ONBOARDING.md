@@ -20,17 +20,28 @@ It is **not** a Jest plugin, **not** a replacement for Jest, and **not** a gener
 
 ---
 
+
+
 ## Repo map (where to look)
 
 ```text
 test-auditor/
-├── package.json          # bin → dist/cli.js; ships dist/ + viewer/
+├── package.json          # bin → dist/cli.js; ships dist/ + config/ + viewer/
 ├── tsconfig.json         # compiles src/ → dist/
+├── config/
+│   └── cms-registry.json # CMS catalog + detection patterns (user-extendable)
 ├── README.md             # user-facing install / --path guide
 ├── src/                  # TypeScript source (edit here)
 │   ├── cli.ts            # ENTRY POINT
 │   ├── discovery.ts
 │   ├── staticAnalyzer.ts
+│   ├── cmsRegistry.ts
+│   ├── cmsPrompt.ts
+│   ├── cmsMigrationAnalyzer.ts
+│   ├── cmsReadinessScore.ts
+│   ├── sourceDiscovery.ts
+│   ├── completenessAnalyzer.ts
+│   ├── completenessScore.ts
 │   ├── rules/types.ts
 │   ├── testRunner.ts
 │   ├── coverageParser.ts
@@ -40,15 +51,19 @@ test-auditor/
 ├── viewer/               # static HTML/CSS/JS report UI
 │   ├── index.html
 │   ├── styles.css
+│   ├── helpers.js
+│   ├── parse.js
 │   └── app.js
 └── dist/                 # compiled JS (what npm runs) — do not edit by hand
 ```
 
-Build: `npm run build` → `tsc` writes `dist/` and makes `dist/cli.js` executable.
+Build: `npm run build` → `tsc` writes `dist/`, copies `config/cms-registry.json` into `dist/config/`, and makes `dist/cli.js` executable.
 
 Published binary name: `test-auditor` → `dist/cli.js`.
 
 ---
+
+
 
 ## End-to-end walkthrough (entry → exit)
 
@@ -58,14 +73,20 @@ Think of one command:
 npx test-auditor --path /path/to/jest-project
 ```
 
+
+
 ### 0. Process starts
 
 1. OS runs the shebang / Node on `dist/cli.js` (built from `src/cli.ts`).
 2. `commander` parses flags:
-   - `--path` (required) — Jest project root
-   - `--output` — report path (default `./audit-report.md`)
-   - `--skip-run` — static analysis only
-   - `--no-open` — skip browser viewer
+  - `--path` (required) — Jest project root
+  - `--output` — report path (default `./audit-report.md`)
+  - `--skip-run` — static analysis only
+  - `--no-open` — skip browser viewer
+  - `--no-cms` — skip CMS migration prompts and analysis
+  - `--cms-from` / `--cms-to` — non-interactive CMS pair (both required together)
+  - `--cms-config` — optional JSON to merge/override the built-in CMS catalog
+  - `--no-completeness` — skip source↔test gap / completeness analysis
 
 All orchestration lives in the `.action(...)` callback in `cli.ts`.
 
@@ -73,11 +94,50 @@ All orchestration lives in the `.action(...)` callback in `cli.ts`.
 
 **CLI calls:** `discoverTestFiles(projectPath)`
 
-**What it does:** Glob for common Jest unit-test patterns under the project (e.g. `*.test.*`, `*.spec.*`, `__tests__`), while skipping e2e-ish paths (Playwright / Cypress style folders).
+**What it does:** Glob for common Jest unit-test patterns under the project (e.g. `*.test.`*, `*.spec.*`, `__tests__`), while skipping e2e-ish paths (Playwright / Cypress style folders).
 
 **Output:** `string[]` of absolute (or resolved) test file paths.
 
 **CLI prints:** how many test files were found.
+
+### 1b. CMS migration (opt-in) — `cmsRegistry.ts` + `cmsPrompt.ts` + `cmsMigrationAnalyzer.ts` + `cmsReadinessScore.ts`
+
+**When it runs**
+
+
+| Mode            | Behavior                                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Interactive TTY | After discovery, prompts **Current CMS** then **New CMS** (dropdown from registry). Press through or use `--no-cms` to skip. |
+| CI / non-TTY    | Skipped unless both `--cms-from` and `--cms-to` are set                                                                      |
+| `--no-cms`      | Always skipped                                                                                                               |
+
+
+**Config:** Built-in catalog is `[config/cms-registry.json](../config/cms-registry.json)` (AEM, Amplience, Contentful, CoreMedia, Sanity, Strapi, Drupal, Sitecore, Prismic, Storyblok, WordPress). `--cms-config <path>` merges/overrides by `id`.
+
+**What it does (separate from Quality Score):**
+
+1. Loads registry → resolves source/target CMS entries
+2. Scans the same discovered test files for legacy imports, mocks, string literals, fixture paths; notes target-CMS progress and gaps
+3. Computes a **CMS readiness** score 0–100 (does **not** change Quality Score)
+
+**Report:** When active, adds a `## CMS Migration` section (metrics + findings table). When skipped, that section is omitted — older reports and the viewer keep working unchanged.
+
+**Viewer:** Parses `## CMS Migration` when present → migration hero (from → to badges + readiness) + **CMS Migration findings** accordion with severity/category filters. Absent section → no CMS UI.
+
+### 1c. Test completeness (default on) — `sourceDiscovery.ts` + `completenessAnalyzer.ts` + `completenessScore.ts`
+
+**When it runs:** After coverage parse, unless `--no-completeness`.
+
+**What it does (separate from Quality Score):**
+
+1. Discovers app source modules (`app/`, `pages/`, `components/`, `hooks/`, `lib/`, …) — not test files
+2. Maps each source to matching tests (name/folder/import heuristics) and Jest coverage %
+3. Emits prioritized recommendations: missing tests, weak coverage, perf/loading risks
+4. Computes a **Test completeness** score 0–100
+
+**Report:** Adds `## Test Completeness` with metrics + Recommendations table.
+
+**Viewer:** Completeness hero + **Missing tests / recommendations** accordion (priority / kind / tag filters). Untested and High-risk gaps pills in the summary strip.
 
 ### 2. Static analysis — `staticAnalyzer.ts` + `rules/types.ts`
 
@@ -148,11 +208,13 @@ Also buckets issues by strategy for the report’s “Strategies” section.
 
 ### 6. Markdown report — `reportGenerator.ts`
 
-**CLI calls:** `generateMarkdownReport({ staticIssues, runSummary, coverage, quality }, outputPath)`
+**CLI calls:** `generateMarkdownReport({ staticIssues, runSummary, coverage, quality, cmsMigration? }, outputPath)`
 
 **What it does:** **We** write a Markdown file (default `audit-report.md`) with sections such as:
 
 - Quality Score (+ Strategies table)
+- CMS Migration (optional — only when CMS mode was selected)
+- Test Completeness (optional — default on; omit with `--no-completeness`)
 - Summary metrics
 - Static Analysis Issues
 - Failed Tests (from Jest messages we captured)
@@ -176,7 +238,7 @@ Jest may also write its own artifacts under the app’s `coverage/` folder; that
 4. Opens the default browser to that URL
 5. **Keeps the CLI process alive** until Ctrl+C (SIGINT/SIGTERM), then closes the server
 
-**Browser side (`viewer/app.js`):**
+**Browser side (**`viewer/app.js`**):**
 
 - Fetches `/report.md` (or user drops/opens a `.md` file)
 - Parses Markdown tables/sections into JSON-like structures
@@ -187,6 +249,8 @@ Jest may also write its own artifacts under the app’s `coverage/` folder; that
 With `--no-open`, step 7 is skipped; CLI exits right after writing the report.
 
 ---
+
+
 
 ## Pipeline diagram
 
@@ -222,31 +286,43 @@ With `--no-open`, step 7 is skipped; CLI exits right after writing the report.
 
 ---
 
+
+
 ## What each `src/` file does
 
-| File | Role |
-|------|------|
-| **`cli.ts`** | Entry point. Parses CLI flags, prints colored progress, wires every step in order, decides whether to open the viewer. |
-| **`discovery.ts`** | Finds unit-test files via glob; excludes obvious e2e paths. |
-| **`rules/types.ts`** | Shared types: severities, strategy IDs, `TestIssue`, human-readable `STRATEGY_META`. |
-| **`staticAnalyzer.ts`** | Babel parse + traverse; emits static `TestIssue`s per strategy/rule. Purely our logic on source files. |
-| **`testRunner.ts`** | Spawns Jest in the target app, parses Jest JSON, builds `RunSummary` / test cases / failure messages. |
-| **`coverageParser.ts`** | Reads Jest/Istanbul coverage artifacts into a simple per-file % list. |
-| **`qualityScore.ts`** | Combines static issues + Jest run + coverage into score/grade/strategy breakdown. |
-| **`reportGenerator.ts`** | Writes the Markdown audit report we own. |
-| **`viewerServer.ts`** | Local static file server + `/report.md` + open browser + wait for Ctrl+C. |
+
+| File                 | Role                                                                                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `cli.ts`             | Entry point. Parses CLI flags, prints colored progress, wires every step in order, decides whether to open the viewer. |
+| `discovery.ts`       | Finds unit-test files via glob; excludes obvious e2e paths.                                                            |
+| `rules/types.ts`     | Shared types: severities, strategy IDs, `TestIssue`, human-readable `STRATEGY_META`.                                   |
+| `staticAnalyzer.ts`  | Babel parse + traverse; emits static `TestIssue`s per strategy/rule. Purely our logic on source files.                 |
+| `testRunner.ts`      | Spawns Jest in the target app, parses Jest JSON, builds `RunSummary` / test cases / failure messages.                  |
+| `coverageParser.ts`  | Reads Jest/Istanbul coverage artifacts into a simple per-file % list.                                                  |
+| `qualityScore.ts`    | Combines static issues + Jest run + coverage into score/grade/strategy breakdown.                                      |
+| `reportGenerator.ts` | Writes the Markdown audit report we own.                                                                               |
+| `viewerServer.ts`    | Local static file server + `/report.md` + open browser + wait for Ctrl+C.                                              |
+
+
+
 
 ### Viewer package (not under `src/`, but part of the product)
 
-| File | Role |
-|------|------|
-| **`viewer/index.html`** | Shell: dropzone, report regions, modal, tooltip host. |
-| **`viewer/styles.css`** | Layout and theme for the interactive report. |
-| **`viewer/app.js`** | Client-only Markdown parser + UI (metrics, strategies, accordions, modals, filters). No Node APIs. |
+
+| File                | Role                                                                                               |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| `viewer/index.html` | Shell: dropzone, report regions, modal, tooltip host.                                              |
+| `viewer/styles.css` | Layout and theme for the interactive report.                                                       |
+| `viewer/app.js`     | Client-only Markdown parser + UI (metrics, strategies, accordions, modals, filters). No Node APIs. |
+
 
 ---
 
+
+
 ## FAQs
+
+
 
 ### How does the viewer start?
 
@@ -274,12 +350,16 @@ With `--skip-run`, we never start Jest.
 
 ### Is the report created by us or by Jest?
 
-| Artifact | Who creates it |
-|----------|----------------|
-| `audit-report.md` (or `--output`) | **test-auditor** (`reportGenerator.ts`) |
-| Jest JSON result (temp file) | **Jest** (we request it with `--json` / `--outputFile`) |
-| `coverage/*.json` under the app | **Jest / Istanbul** (we request coverage reporters) |
-| Interactive UI | **test-auditor** (`viewer/` + `viewerServer.ts`) |
+
+| Artifact                          | Who creates it                                          |
+| --------------------------------- | ------------------------------------------------------- |
+| `audit-report.md` (or `--output`) | **test-auditor** (`reportGenerator.ts`)                 |
+| Jest JSON result (temp file)      | **Jest** (we request it with `--json` / `--outputFile`) |
+| `coverage/*.json` under the app   | **Jest / Istanbul** (we request coverage reporters)     |
+| Interactive UI                    | **test-auditor** (`viewer/` + `viewerServer.ts`)        |
+
+
+
 
 ### Are static findings purely our logic, or a mix with Jest?
 
@@ -287,23 +367,49 @@ With `--skip-run`, we never start Jest.
 
 Jest does **not** produce those static rule IDs. Jest contributes **runtime** data: pass/fail/pending/todo, failure messages, coverage. The quality score and Markdown report **combine** both worlds, but the “Static Analysis Issues” rows are ours alone.
 
+### How does CMS migration auditing work?
+
+**Opt-in and separate from Quality Score.**
+
+1. Pick source → target CMS via interactive CLI dropdowns (TTY) or `--cms-from` / `--cms-to`.
+2. Patterns come from `config/cms-registry.json` (extend with `--cms-config`).
+3. `cmsMigrationAnalyzer.ts` flags legacy imports/mocks/strings/fixtures and migration gaps/progress in **unit test files only**.
+4. `cmsReadinessScore.ts` produces a readiness grade that appears in `## CMS Migration` and the viewer hero — it never feeds `qualityScore.ts`.
+
+Skip entirely with `--no-cms` (or omit flags in CI). Existing audits without CMS selection behave exactly as before.
+
+### How does Test Completeness work?
+
+**Default on; separate from Quality Score.**
+
+1. Discovers application source (pages, APIs, components, hooks, services) — not just tests.
+2. Maps each module to unit tests by convention and import mentions; uses coverage % when available.
+3. Recommends what to write next (missing / weak coverage / perf-loading), with priority.
+4. `completenessScore.ts` produces a grade shown in `## Test Completeness` and the viewer — it never feeds `qualityScore.ts`.
+
+Skip with `--no-completeness`.
+
 ### Does this library work only for Jest?
 
 **Practically yes for a full audit.**
 
 - **Designed for:** Jest unit tests in JS/TS (including Next.js apps that use Jest).
-- **Static analysis** could theoretically scan any similar test file syntax, but discovery patterns, `--skip-run` empty runtime, and especially **`testRunner` / coverage** assume Jest.
+- **Static analysis** could theoretically scan any similar test file syntax, but discovery patterns, `--skip-run` empty runtime, and especially `testRunner` **/ coverage** assume Jest.
 - **Not supported as first-class:** Vitest, Mocha, Jasmine, Playwright, Cypress, etc. E2E-style folders are intentionally ignored in discovery.
 
 If someone asks “can we support Vitest?”, that would be a new runner + coverage adapter — not a small config tweak.
 
 ---
 
+
+
 ## Mental model (one sentence)
 
 > We find tests, judge their **source quality** ourselves, ask **Jest** how the suite **ran** and what **coverage** looks like, then write **our** Markdown report and optionally host **our** viewer until you stop the process.
 
 ---
+
+
 
 ## Suggested first tasks for a new member
 
@@ -315,6 +421,9 @@ If someone asks “can we support Vitest?”, that would be a new runner + cover
 
 ---
 
+
+
 ## Related docs
 
-- User install / `--path` / monorepo guidance: [`README.md`](../README.md)
+- User install / `--path` / monorepo guidance: `[README.md](../README.md)`
+

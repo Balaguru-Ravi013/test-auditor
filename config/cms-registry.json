@@ -1,0 +1,314 @@
+{
+  "cms": [
+    {
+      "id": "aem",
+      "displayName": "Adobe Experience Manager",
+      "patterns": {
+        "importModules": [
+          "@adobe/aem-spa-page-model-manager",
+          "@adobe/aem-react-editable-components",
+          "@adobe/aem-core-components-react-base",
+          "@adobe/aem-core-components-react-spa",
+          "aem-client",
+          "@aem/"
+        ],
+        "stringLiterals": [
+          "/content/",
+          "cq:",
+          "sling:resourceType",
+          "jcr:content",
+          "wcm/foundation"
+        ],
+        "mockModules": [
+          "@adobe/aem-spa-page-model-manager",
+          "@adobe/aem-react-editable-components",
+          "aem-client",
+          "@aem/"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/aem/**",
+          "**/mocks/aem/**",
+          "**/__mocks__/aem/**"
+        ]
+      }
+    },
+    {
+      "id": "contentful",
+      "displayName": "Contentful",
+      "patterns": {
+        "importModules": [
+          "contentful",
+          "contentful-management",
+          "@contentful/rich-text-react-renderer",
+          "@contentful/rich-text-types",
+          "@contentful/live-preview"
+        ],
+        "stringLiterals": [
+          "contentful.com",
+          "cdn.contentful.com",
+          "CONTENTFUL_",
+          "sys.contentType"
+        ],
+        "mockModules": [
+          "contentful",
+          "contentful-management",
+          "@contentful/"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/contentful/**",
+          "**/mocks/contentful/**",
+          "**/__mocks__/contentful/**"
+        ]
+      }
+    },
+    {
+      "id": "amplience",
+      "displayName": "Amplience",
+      "patterns": {
+        "importModules": [
+          "dc-delivery-sdk-js",
+          "dc-management-sdk-js",
+          "dc-extensions-sdk",
+          "@amplience/"
+        ],
+        "stringLiterals": [
+          "cdn.media.amplience.net",
+          "amplience.net",
+          "AMPLIENCE_",
+          "ampDynamicContent",
+          "hubName",
+          "deliveryKey"
+        ],
+        "mockModules": [
+          "dc-delivery-sdk-js",
+          "dc-management-sdk-js",
+          "dc-extensions-sdk",
+          "@amplience/"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/amplience/**",
+          "**/mocks/amplience/**",
+          "**/__mocks__/amplience/**"
+        ]
+      }
+    },
+    {
+      "id": "sanity",
+      "displayName": "Sanity",
+      "patterns": {
+        "importModules": [
+          "@sanity/client",
+          "next-sanity",
+          "@sanity/image-url",
+          "sanity"
+        ],
+        "stringLiterals": [
+          "cdn.sanity.io",
+          "sanity.io",
+          "SANITY_",
+          "_type"
+        ],
+        "mockModules": [
+          "@sanity/client",
+          "next-sanity",
+          "sanity"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/sanity/**",
+          "**/mocks/sanity/**",
+          "**/__mocks__/sanity/**"
+        ]
+      }
+    },
+    {
+      "id": "strapi",
+      "displayName": "Strapi",
+      "patterns": {
+        "importModules": [
+          "@strapi/strapi",
+          "@strapi/client",
+          "strapi"
+        ],
+        "stringLiterals": [
+          "/api/",
+          "STRAPI_",
+          "strapi.io"
+        ],
+        "mockModules": [
+          "@strapi/strapi",
+          "@strapi/client",
+          "strapi"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/strapi/**",
+          "**/mocks/strapi/**",
+          "**/__mocks__/strapi/**"
+        ]
+      }
+    },
+    {
+      "id": "coremedia",
+      "displayName": "CoreMedia",
+      "patterns": {
+        "importModules": [
+          "@coremedia/",
+          "coremedia-headless-client-react",
+          "coremedia-headless"
+        ],
+        "stringLiterals": [
+          "COREMEDIA_",
+          "coremedia",
+          "coremedia.io",
+          "headless-server",
+          "SiteContextProvider",
+          "graphql/coremedia"
+        ],
+        "mockModules": [
+          "@coremedia/",
+          "coremedia-headless-client-react",
+          "coremedia-headless"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/coremedia/**",
+          "**/mocks/coremedia/**",
+          "**/__mocks__/coremedia/**"
+        ]
+      }
+    },
+    {
+      "id": "drupal",
+      "displayName": "Drupal",
+      "patterns": {
+        "importModules": [
+          "drupal-jsonapi-params",
+          "next-drupal",
+          "@drupal/"
+        ],
+        "stringLiterals": [
+          "/jsonapi/",
+          "DRUPAL_",
+          "node--",
+          "taxonomy_term--"
+        ],
+        "mockModules": [
+          "drupal-jsonapi-params",
+          "next-drupal",
+          "@drupal/"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/drupal/**",
+          "**/mocks/drupal/**",
+          "**/__mocks__/drupal/**"
+        ]
+      }
+    },
+    {
+      "id": "sitecore",
+      "displayName": "Sitecore",
+      "patterns": {
+        "importModules": [
+          "@sitecore-jss/sitecore-jss",
+          "@sitecore-jss/sitecore-jss-nextjs",
+          "@sitecore-jss/sitecore-jss-react",
+          "@sitecore-feaas/clientside"
+        ],
+        "stringLiterals": [
+          "sitecore",
+          "SITECORE_",
+          "jss-",
+          "__typename"
+        ],
+        "mockModules": [
+          "@sitecore-jss/",
+          "@sitecore-feaas/"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/sitecore/**",
+          "**/mocks/sitecore/**",
+          "**/__mocks__/sitecore/**"
+        ]
+      }
+    },
+    {
+      "id": "prismic",
+      "displayName": "Prismic",
+      "patterns": {
+        "importModules": [
+          "@prismicio/client",
+          "@prismicio/react",
+          "@prismicio/next",
+          "@prismicio/helpers"
+        ],
+        "stringLiterals": [
+          "prismic.io",
+          "PRISMIC_",
+          "cdn.prismic.io"
+        ],
+        "mockModules": [
+          "@prismicio/client",
+          "@prismicio/react",
+          "@prismicio/next"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/prismic/**",
+          "**/mocks/prismic/**",
+          "**/__mocks__/prismic/**"
+        ]
+      }
+    },
+    {
+      "id": "storyblok",
+      "displayName": "Storyblok",
+      "patterns": {
+        "importModules": [
+          "@storyblok/react",
+          "@storyblok/js",
+          "storyblok-js-client"
+        ],
+        "stringLiterals": [
+          "storyblok.com",
+          "STORYBLOK_",
+          "cdn.storyblok.com"
+        ],
+        "mockModules": [
+          "@storyblok/react",
+          "@storyblok/js",
+          "storyblok-js-client"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/storyblok/**",
+          "**/mocks/storyblok/**",
+          "**/__mocks__/storyblok/**"
+        ]
+      }
+    },
+    {
+      "id": "wordpress",
+      "displayName": "WordPress (headless)",
+      "patterns": {
+        "importModules": [
+          "@wordpress/api-fetch",
+          "wpapi",
+          "@faustwp/core",
+          "next-wordpress"
+        ],
+        "stringLiterals": [
+          "/wp-json/",
+          "wp-content",
+          "WORDPRESS_",
+          "WP_"
+        ],
+        "mockModules": [
+          "@wordpress/api-fetch",
+          "wpapi",
+          "@faustwp/core"
+        ],
+        "fixturePaths": [
+          "**/__fixtures__/wordpress/**",
+          "**/mocks/wordpress/**",
+          "**/__mocks__/wp/**"
+        ]
+      }
+    }
+  ]
+}

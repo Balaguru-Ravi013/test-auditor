@@ -258,6 +258,11 @@ You only need the global unlink when no project should use that local link anymo
 | `-o, --output <path>` | Markdown report path | `./audit-report.md` |
 | `--skip-run` | Static analysis only (do not run Jest) | off |
 | `--no-open` | Do not open the interactive viewer after audit | off (viewer opens by default) |
+| `--no-cms` | Skip CMS migration prompts and analysis | off (TTY prompts for CMS pair) |
+| `--cms-from <id>` | Source CMS id (non-interactive; use with `--cms-to`) | — |
+| `--cms-to <id>` | Target CMS id (non-interactive; use with `--cms-from`) | — |
+| `--cms-config <path>` | Merge/override built-in CMS registry JSON | built-in `config/cms-registry.json` |
+| `--no-completeness` | Skip source↔test gap / completeness analysis | off (completeness runs by default) |
 
 Examples:
 
@@ -270,8 +275,20 @@ npx test-auditor --path /Users/you/Documents/my-next-app -o ~/Desktop/audit-repo
 
 # Static checks only (faster)
 npx test-auditor --path /Users/you/Documents/my-next-app --skip-run
+
+# Skip CMS migration prompts
+npx test-auditor --path /Users/you/Documents/my-next-app --no-cms
+
+# Skip completeness (source↔test gap) analysis
+npx test-auditor --path /Users/you/Documents/my-next-app --no-completeness
+
+# CI: CMS migration audit without interactive prompts (e.g. AEM → Contentful)
+npx test-auditor --path /Users/you/Documents/my-next-app --cms-from aem --cms-to contentful --no-open
 ```
 
+On an interactive terminal, after discovery the CLI asks for **Current CMS** and **New CMS** (unless `--no-cms` or flags are set). Findings appear in a separate **CMS Migration** report section and viewer hero — they do **not** change the Quality Score.
+
+By default the auditor also analyzes **application source** vs tests and writes a **Test Completeness** section (what is missing and what to write next). That score is also separate from Quality.
 ---
 
 ## View the report in a browser

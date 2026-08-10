@@ -361,6 +361,51 @@ body {
   color: var(--red);
 }
 
+.cms-hero__glow {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--accent, #6ea8fe) 28%, transparent),
+    transparent 70%
+  );
+}
+
+.cms-hero__route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.55rem;
+}
+
+.cms-hero__arrow {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.cms-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.cms-badge--target {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  color: var(--green);
+}
+
+.completeness-hero__glow {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, #e8a838 26%, transparent),
+    transparent 70%
+  );
+}
+
 .metric {
   position: relative;
   background: var(--panel);

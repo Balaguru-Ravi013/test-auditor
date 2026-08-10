@@ -8,7 +8,7 @@
     "test-auditor": "dist/cli.js"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json --outDir dist && chmod +x dist/cli.js",
+    "build": "rm -rf dist && tsc -p tsconfig.json --outDir dist && mkdir -p dist/config && cp config/cms-registry.json dist/config/cms-registry.json && chmod +x dist/cli.js",
     "start": "node dist/cli.js",
     "dev": "ts-node src/cli.ts",
     "viewer": "npx --yes serve viewer -p 4173"
@@ -17,6 +17,7 @@
   "author": "",
   "files": [
     "dist",
+    "config",
     "viewer",
     "README.md"
   ],
@@ -24,6 +25,7 @@
   "dependencies": {
     "@babel/parser": "^8.0.4",
     "@babel/traverse": "^8.0.4",
+    "@inquirer/prompts": "^7.10.1",
     "chalk": "^5.6.2",
     "commander": "^15.0.0",
     "execa": "^10.0.0",

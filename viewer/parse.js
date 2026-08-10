@@ -171,16 +171,129 @@ export function parseReport(md) {
     };
   });
 
+  var cmsMigration = parseCmsMigration(sectionBody(md, "CMS Migration"));
+  var testCompleteness = parseTestCompleteness(
+    sectionBody(md, "Test Completeness")
+  );
+
   return {
     generated: generatedMatch ? generatedMatch[1].trim() : "",
     summary: summary,
     quality: quality,
     strategies: strategies,
+    cmsMigration: cmsMigration,
+    testCompleteness: testCompleteness,
     issues: issues,
     failed: failedParsed.files,
     failedMeta: failedParsed.meta,
     tests: tests,
     coverage: coverage,
     rawEmptyCoverage: /No coverage data found/i.test(sectionBody(md, "Coverage")),
+  };
+}
+
+function parseCmsMigration(body) {
+  if (!body || !body.trim()) return null;
+
+  var fromTo = body.match(
+    /\*\*From:\*\*\s*(.+?)\s*\(`([^`]+)`\)\s*→\s*\*\*To:\*\*\s*(.+?)\s*\(`([^`]+)`\)/i
+  );
+  if (!fromTo) {
+    // Fallback: still try metrics table
+    fromTo = null;
+  }
+
+  var main = body.split(/\n###\s+/)[0] || body;
+  var table = parseMarkdownTable(main);
+  var metrics = {};
+  table.rows.forEach(function (row) {
+    if (row.length >= 2) metrics[row[0]] = row[1];
+  });
+
+  if (!metrics.Readiness && !fromTo) return null;
+
+  var findingsBlock = "";
+  var findingsMatch = body.match(
+    /###\s+Migration findings\s*\n([\s\S]*?)(?=\n###\s+|$)/i
+  );
+  if (findingsMatch) findingsBlock = findingsMatch[1];
+  var findingsTable = parseMarkdownTable(findingsBlock);
+  var issues = [];
+  if (findingsTable.rows.length) {
+    findingsTable.rows.forEach(function (row) {
+      if (row.length < 6) return;
+      issues.push({
+        file: row[0] || "",
+        line: row[1] || "",
+        category: (row[2] || "").toLowerCase(),
+        rule: row[3] || "",
+        severity: (row[4] || "").toLowerCase(),
+        cmsId: row[5] || "",
+        message: row[6] || "",
+      });
+    });
+  }
+
+  return {
+    from: fromTo
+      ? { displayName: fromTo[1].trim(), id: fromTo[2].trim() }
+      : { displayName: "", id: "" },
+    to: fromTo
+      ? { displayName: fromTo[3].trim(), id: fromTo[4].trim() }
+      : { displayName: "", id: "" },
+    readiness: metrics.Readiness || "",
+    grade: metrics.Grade || "",
+    summary: metrics.Summary || "",
+    filesScanned: metrics["Files scanned"] || "",
+    filesWithLegacyRefs: metrics["Files with legacy refs"] || "",
+    legacyIssues: metrics["Legacy issues"] || "",
+    gapIssues: metrics["Gap issues"] || "",
+    progressSignals: metrics["Progress signals"] || "",
+    issues: issues,
+  };
+}
+
+function parseTestCompleteness(body) {
+  if (!body || !body.trim()) return null;
+
+  var main = body.split(/\n###\s+/)[0] || body;
+  var table = parseMarkdownTable(main);
+  var metrics = {};
+  table.rows.forEach(function (row) {
+    if (row.length >= 2) metrics[row[0]] = row[1];
+  });
+
+  if (!metrics.Score) return null;
+
+  var recBlock = "";
+  var recMatch = body.match(
+    /###\s+Recommendations\s*\n([\s\S]*?)(?=\n###\s+|$)/i
+  );
+  if (recMatch) recBlock = recMatch[1];
+  var recTable = parseMarkdownTable(recBlock);
+  var recommendations = [];
+  recTable.rows.forEach(function (row) {
+    if (row.length < 5) return;
+    recommendations.push({
+      source: row[0] || "",
+      kind: (row[1] || "").toLowerCase(),
+      priority: (row[2] || "").toLowerCase(),
+      tag: (row[3] || "").toLowerCase(),
+      why: row[4] || "",
+      suggest: row[5] || "",
+    });
+  });
+
+  return {
+    score: metrics.Score || "",
+    grade: metrics.Grade || "",
+    summary: metrics.Summary || "",
+    sourcesScanned: metrics["Sources scanned"] || "",
+    withTests: metrics["With tests"] || "",
+    untested: metrics.Untested || "",
+    weakCoverage: metrics["Weak coverage"] || "",
+    perfRisks: metrics["Perf risks"] || "",
+    highPriority: metrics["High priority"] || "",
+    recommendations: recommendations,
   };
 }

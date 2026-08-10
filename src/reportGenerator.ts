@@ -4,12 +4,28 @@ import type { TestIssue } from './staticAnalyzer.js';
 import type { RunSummary } from './testRunner.js';
 import type { FileCoverage } from './coverageParser.js';
 import type { QualityReport } from './qualityScore.js';
+import type { CmsMigrationIssue } from './cmsMigrationAnalyzer.js';
+import type { CmsReadinessReport } from './cmsReadinessScore.js';
+import type { CompletenessRecommendation } from './completenessAnalyzer.js';
+import type { CompletenessReport } from './completenessScore.js';
+
+export interface CmsMigrationReport {
+  readiness: CmsReadinessReport;
+  issues: CmsMigrationIssue[];
+}
+
+export interface CompletenessAuditReport {
+  completeness: CompletenessReport;
+  recommendations: CompletenessRecommendation[];
+}
 
 export interface AuditReport {
   staticIssues: TestIssue[];
   runSummary: RunSummary;
   coverage: FileCoverage[];
   quality: QualityReport;
+  cmsMigration?: CmsMigrationReport;
+  testCompleteness?: CompletenessAuditReport;
 }
 
 function escCell(value: string | number): string {
@@ -17,7 +33,14 @@ function escCell(value: string | number): string {
 }
 
 export function generateMarkdownReport(report: AuditReport, outputPath: string) {
-  const { staticIssues, runSummary, coverage, quality } = report;
+  const {
+    staticIssues,
+    runSummary,
+    coverage,
+    quality,
+    cmsMigration,
+    testCompleteness,
+  } = report;
 
   const errorCount = staticIssues.filter((i) => i.severity === 'error').length;
   const warningCount = staticIssues.filter((i) => i.severity === 'warning').length;
@@ -39,6 +62,58 @@ export function generateMarkdownReport(report: AuditReport, outputPath: string) 
       md += `| ${escCell(s.title)} | ${s.errors} | ${s.warnings} | ${s.infos} | ${s.total} |\n`;
     }
     md += `\n`;
+  }
+
+  if (cmsMigration) {
+    const { readiness, issues } = cmsMigration;
+    md += `## CMS Migration\n\n`;
+    md += `**From:** ${escCell(readiness.fromCms.displayName)} (\`${readiness.fromCms.id}\`) → **To:** ${escCell(readiness.toCms.displayName)} (\`${readiness.toCms.id}\`)\n\n`;
+    md += `| Metric | Value |\n|---|---|\n`;
+    md += `| Readiness | ${readiness.score}/100 |\n`;
+    md += `| Grade | ${readiness.grade} (${escCell(readiness.label)}) |\n`;
+    md += `| Summary | ${escCell(readiness.summary)} |\n`;
+    md += `| Files scanned | ${readiness.stats.filesScanned} |\n`;
+    md += `| Files with legacy refs | ${readiness.stats.filesWithLegacyRefs} |\n`;
+    md += `| Legacy issues | ${readiness.stats.legacyIssues} |\n`;
+    md += `| Gap issues | ${readiness.stats.gapIssues} |\n`;
+    md += `| Progress signals | ${readiness.stats.progressSignals} |\n\n`;
+
+    md += `### Migration findings\n\n`;
+    if (issues.length === 0) {
+      md += `No CMS migration findings.\n\n`;
+    } else {
+      md += `| File | Line | Category | Rule | Severity | CMS | Message |\n|---|---|---|---|---|---|---|\n`;
+      for (const issue of issues) {
+        md += `| ${escCell(issue.file)} | ${issue.line} | ${escCell(issue.category)} | ${escCell(issue.rule)} | ${issue.severity} | ${escCell(issue.cmsId)} | ${escCell(issue.message)} |\n`;
+      }
+      md += `\n`;
+    }
+  }
+
+  if (testCompleteness) {
+    const { completeness, recommendations } = testCompleteness;
+    md += `## Test Completeness\n\n`;
+    md += `| Metric | Value |\n|---|---|\n`;
+    md += `| Score | ${completeness.score}/100 |\n`;
+    md += `| Grade | ${completeness.grade} (${escCell(completeness.label)}) |\n`;
+    md += `| Summary | ${escCell(completeness.summary)} |\n`;
+    md += `| Sources scanned | ${completeness.stats.sourcesScanned} |\n`;
+    md += `| With tests | ${completeness.stats.withTests} |\n`;
+    md += `| Untested | ${completeness.stats.untested} |\n`;
+    md += `| Weak coverage | ${completeness.stats.weakCoverage} |\n`;
+    md += `| Perf risks | ${completeness.stats.perfRisks} |\n`;
+    md += `| High priority | ${completeness.stats.highPriority} |\n\n`;
+
+    md += `### Recommendations\n\n`;
+    if (recommendations.length === 0) {
+      md += `No completeness recommendations.\n\n`;
+    } else {
+      md += `| Source | Kind | Priority | Tag | Why | Suggest |\n|---|---|---|---|---|---|\n`;
+      for (const r of recommendations) {
+        md += `| ${escCell(r.source)} | ${escCell(r.kind)} | ${escCell(r.priority)} | ${escCell(r.tag)} | ${escCell(r.why)} | ${escCell(r.suggest)} |\n`;
+      }
+      md += `\n`;
+    }
   }
 
   md += `## Summary\n\n`;

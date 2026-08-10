@@ -7,8 +7,16 @@ import { analyzeFile } from './staticAnalyzer.js';
 import { runJestTests } from './testRunner.js';
 import { parseCoverage } from './coverageParser.js';
 import { generateMarkdownReport } from './reportGenerator.js';
+import type { CmsMigrationReport, CompletenessAuditReport } from './reportGenerator.js';
 import { openReportViewer } from './viewerServer.js';
 import { computeQualityScore } from './qualityScore.js';
+import { loadCmsRegistry, resolveCmsPair } from './cmsRegistry.js';
+import { promptCmsMigration } from './cmsPrompt.js';
+import { analyzeCmsMigration } from './cmsMigrationAnalyzer.js';
+import { computeCmsReadiness } from './cmsReadinessScore.js';
+import { discoverSourceFiles } from './sourceDiscovery.js';
+import { analyzeCompleteness } from './completenessAnalyzer.js';
+import { computeCompletenessScore } from './completenessScore.js';
 
 /**
  * Keys (labels) stay neutral bold.
@@ -59,6 +67,11 @@ program
   .option('-o, --output <path>', 'Output report path', './audit-report.md')
   .option('--skip-run', 'Skip actually running Jest (static analysis only)')
   .option('--no-open', 'Do not open the interactive report viewer after audit')
+  .option('--no-cms', 'Skip CMS migration prompts and analysis')
+  .option('--cms-from <id>', 'Source CMS id (non-interactive; requires --cms-to)')
+  .option('--cms-to <id>', 'Target CMS id (non-interactive; requires --cms-from)')
+  .option('--cms-config <path>', 'Optional CMS registry JSON to merge/override built-in catalog')
+  .option('--no-completeness', 'Skip source↔test gap / completeness analysis')
   .action(async (options) => {
     const projectPath = path.resolve(options.path);
     printHeader();
@@ -71,6 +84,65 @@ program
       'Discovery',
       `${yellow(files.length)} ${dim('test files')}`
     );
+
+    // 1b. CMS migration selection (opt-in)
+    let cmsMigration: CmsMigrationReport | undefined;
+    const skipCms = options.cms === false; // commander --no-cms → cms: false
+    const hasCmsFlags = Boolean(options.cmsFrom || options.cmsTo);
+
+    if (!skipCms) {
+      try {
+        const registry = loadCmsRegistry(
+          options.cmsConfig ? path.resolve(options.cmsConfig) : undefined
+        );
+
+        let pair: { from: ReturnType<typeof resolveCmsPair>['from']; to: ReturnType<typeof resolveCmsPair>['to'] } | null =
+          null;
+
+        if (options.cmsFrom && options.cmsTo) {
+          pair = resolveCmsPair(registry, options.cmsFrom, options.cmsTo);
+        } else if (hasCmsFlags) {
+          throw new Error('Both --cms-from and --cms-to are required together');
+        } else if (process.stdin.isTTY && process.stdout.isTTY) {
+          pair = await promptCmsMigration(registry);
+        }
+
+        if (pair) {
+          printStep(
+            'CMS migration',
+            `${chalk.bold(pair.from.displayName)} ${dim(`(${pair.from.id})`)} → ${chalk.bold(pair.to.displayName)} ${dim(`(${pair.to.id})`)}`
+          );
+
+          const cmsIssues = analyzeCmsMigration(files, pair.from, pair.to);
+          const readiness = computeCmsReadiness(
+            files.length,
+            cmsIssues,
+            pair.from,
+            pair.to
+          );
+          cmsMigration = { readiness, issues: cmsIssues };
+
+          const legacyN = readiness.stats.legacyIssues;
+          const readinessColor =
+            readiness.grade === 'A' || readiness.grade === 'B'
+              ? green
+              : readiness.grade === 'C'
+                ? yellow
+                : red;
+          printStep(
+            'CMS readiness',
+            `${readinessColor(`${readiness.grade} · ${readiness.score}/100`)} ${dim(`· ${legacyN} legacy finding(s)`)}`
+          );
+        }
+      } catch (err) {
+        console.log(
+          `  ${red('CMS migration setup failed:')} ${dim((err as Error).message)}`
+        );
+        console.log();
+        process.exitCode = 1;
+        return;
+      }
+    }
 
     // 2. Static analysis
     const staticIssues = files.flatMap((f) => analyzeFile(f));
@@ -129,6 +201,33 @@ program
     // 4. Parse coverage (summary file, final.json, or in-memory coverageMap)
     const coverage = parseCoverage(projectPath, runSummary.coverageMap);
 
+    // 4b. Test completeness (source↔test gaps) — default on, separate from Quality
+    let testCompleteness: CompletenessAuditReport | undefined;
+    const skipCompleteness = options.completeness === false;
+    if (!skipCompleteness) {
+      const sources = await discoverSourceFiles(projectPath);
+      printStep(
+        'Source discovery',
+        `${yellow(sources.length)} ${dim('app modules for gap analysis')}`
+      );
+      const analysis = analyzeCompleteness(projectPath, sources, files, coverage);
+      const completeness = computeCompletenessScore(analysis);
+      testCompleteness = {
+        completeness,
+        recommendations: analysis.recommendations,
+      };
+      const cColor =
+        completeness.grade === 'A' || completeness.grade === 'B'
+          ? green
+          : completeness.grade === 'C'
+            ? yellow
+            : red;
+      printStep(
+        'Completeness',
+        `${cColor(`${completeness.grade} · ${completeness.score}/100`)} ${dim(`· ${completeness.stats.untested} untested · ${completeness.stats.recommendations} recs`)}`
+      );
+    }
+
     // 5. Quality score + report
     const quality = computeQualityScore(staticIssues, runSummary, coverage);
     const gradeColor =
@@ -144,7 +243,14 @@ program
 
     const outputPath = path.resolve(options.output);
     generateMarkdownReport(
-      { staticIssues, runSummary, coverage, quality },
+      {
+        staticIssues,
+        runSummary,
+        coverage,
+        quality,
+        ...(cmsMigration ? { cmsMigration } : {}),
+        ...(testCompleteness ? { testCompleteness } : {}),
+      },
       outputPath
     );
 
