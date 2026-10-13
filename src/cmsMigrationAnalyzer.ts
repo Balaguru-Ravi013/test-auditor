@@ -287,3 +287,34 @@ export function analyzeCmsMigration(
   }
   return all;
 }
+
+function emptyCmsEntry(id: string): CmsEntry {
+  return {
+    id,
+    displayName: id,
+    patterns: {
+      importModules: [],
+      stringLiterals: [],
+      mockModules: [],
+      fixturePaths: [],
+    },
+  };
+}
+
+/**
+ * Scan test files for references to a single CMS (readiness check, not migration).
+ */
+export function analyzeCmsInTests(files: string[], cms: CmsEntry): CmsMigrationIssue[] {
+  const noopTarget = emptyCmsEntry('__none__');
+  const issues = analyzeCmsMigration(files, cms, noopTarget);
+  return issues
+    .filter((issue) => issue.rule !== 'cms-target-absent')
+    .map((issue) => ({
+      ...issue,
+      category: issue.category === 'legacy' ? 'legacy' : issue.category,
+      message: issue.message
+        .replace(/ — migrate to .+$/i, '')
+        .replace(/ — replace with .+ mocks$/i, '')
+        .replace(/legacy /gi, ''),
+    }));
+}

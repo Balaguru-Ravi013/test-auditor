@@ -103,3 +103,23 @@ export function computeCmsReadiness(
     byCategory,
   };
 }
+
+/** Readiness check for a single CMS detected in package.json */
+export function computeSingleCmsReadiness(
+  filesScanned: number,
+  issues: CmsMigrationIssue[],
+  cms: CmsEntry
+): CmsReadinessReport {
+  const report = computeCmsReadiness(filesScanned, issues, cms, cms);
+  const refs = new Set(issues.map((i) => i.file)).size;
+  return {
+    ...report,
+    label: refs === 0 ? 'No test references' : report.label,
+    summary:
+      refs === 0
+        ? `No ${cms.displayName} patterns found in unit tests.`
+        : `${refs} test file(s) reference ${cms.displayName} (${issues.length} finding(s)).`,
+    fromCms: { id: cms.id, displayName: cms.displayName },
+    toCms: { id: cms.id, displayName: cms.displayName },
+  };
+}

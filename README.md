@@ -14,6 +14,109 @@ You need:
 
 ---
 
+## Client project setup (recommended)
+
+One-time setup so every developer can run `npm run audit` without re-entering the API URL or API key.
+
+### 1. Install
+
+```bash
+npm install --save-dev test-auditor
+```
+
+### 2. Initialize project config
+
+From your repo root (or the monorepo root):
+
+```bash
+npx test-auditor init
+```
+
+This creates `.test-auditor.json` (safe to commit):
+
+```json
+{
+  "apiUrl": "https://api.example.com/api/reports"
+}
+```
+
+You can also copy `.test-auditor.json.example` and edit the URL.
+
+### 3. Configure `.test-auditor.json` (primary configuration)
+
+`npx test-auditor init` creates this file at the project/monorepo root:
+
+```json
+{
+  "apiUrl": "http://localhost:3000/api/reports",
+  "apiKey": "<PROJECT_API_KEY>",
+  "cmsReadiness": false,
+  "schedule": {
+    "enabled": false,
+    "frequency": "daily",
+    "time": "09:00",
+    "timezone": "UTC"
+  }
+}
+```
+
+- **apiUrl** — report upload endpoint (not prompted during `npm run audit`)
+- **apiKey** — project API key (sent via `x-api-key` header only)
+- **cmsReadiness** — set `true` to include CMS checks without prompting each time
+
+Keep secrets out of git: add `.test-auditor.json` to `.gitignore` if it contains your API key.
+
+Environment variables (`TEST_AUDITOR_API_KEY`, `TEST_AUDITOR_API_URL`) still work as optional fallbacks for CI.
+
+### 4. Add an npm script
+
+```json
+{
+  "scripts": {
+    "audit": "test-auditor --path . --no-open"
+  }
+}
+```
+
+`test-auditor init` can add this and ensures `test-auditor` is listed under **devDependencies**.
+
+### 5. Run
+
+```bash
+npm run audit
+```
+
+Pass extra flags after `--`:
+
+```bash
+npm run audit -- --cms-readiness
+```
+
+### CMS readiness (opt-in)
+
+CMS checks are **off by default**. When enabled (`--cms-readiness` or `"cmsReadiness": true`):
+
+1. The CLI asks whether to include CMS readiness (interactive runs).
+2. CMS packages are **detected from the app's `package.json`** dependencies.
+3. **One CMS detected** → used automatically (no source/target prompts).
+4. **Multiple CMSs detected** → you choose how they are used (migration, used together, or pick which to check).
+
+Non-interactive migration:
+
+```bash
+test-auditor --path . --cms-from aem --cms-to contentful --no-open
+```
+
+### Configuration precedence
+
+| Setting | Precedence |
+|---------|------------|
+| API URL | CLI `--api-url` → `TEST_AUDITOR_API_URL` → `.test-auditor.json` → default |
+| API key | CLI `--api-key` → `.test-auditor.json` → `TEST_AUDITOR_API_KEY` (fallback) |
+| CMS readiness | CLI `--cms-readiness` / `--no-cms` → `.test-auditor.json` → off |
+
+---
+
 ## Finding the correct `--path` (most important)
 
 `--path` must point to the folder where Jest is configured — the same place you would run `npm test` or `npm run test:coverage`.
@@ -258,11 +361,18 @@ You only need the global unlink when no project should use that local link anymo
 | `-o, --output <path>` | Markdown report path | `./audit-report.md` |
 | `--skip-run` | Static analysis only (do not run Jest) | off |
 | `--no-open` | Do not open the interactive viewer after audit | off (viewer opens by default) |
-| `--no-cms` | Skip CMS migration prompts and analysis | off (TTY prompts for CMS pair) |
-| `--cms-from <id>` | Source CMS id (non-interactive; use with `--cms-to`) | — |
-| `--cms-to <id>` | Target CMS id (non-interactive; use with `--cms-from`) | — |
+| `--no-cms` | Skip CMS readiness check | off (opt-in via prompt or `--cms-readiness`) |
+| `--cms-readiness` | Include CMS readiness check | off unless set in `.test-auditor.json` |
+| `--cms-from <id>` | CMS currently used (with `--cms-to`) | — |
+| `--cms-to <id>` | CMS being adopted (with `--cms-from`) | — |
 | `--cms-config <path>` | Merge/override built-in CMS registry JSON | built-in `config/cms-registry.json` |
 | `--no-completeness` | Skip source↔test gap / completeness analysis | off (completeness runs by default) |
+| `--json-output <path>` | JSON report path (used for upload and local archive) | same as `-o` with `.json` extension |
+| `--upload` | Upload the JSON report to the configured backend API | on when `TEST_AUDITOR_API_KEY` is set |
+| `--no-upload` | Skip report upload even when credentials are configured | off |
+| `--api-key <key>` | Project API key (sent via `x-api-key` header) | `TEST_AUDITOR_API_KEY` |
+| `--api-url <url>` | Report upload API URL | `TEST_AUDITOR_API_URL` or `http://localhost:3000/api/reports` |
+| `--api-timeout <ms>` | Report upload timeout in milliseconds | `TEST_AUDITOR_API_TIMEOUT` or `300000` (5 min) |
 
 Examples:
 
@@ -284,6 +394,79 @@ npx test-auditor --path /Users/you/Documents/my-next-app --no-completeness
 
 # CI: CMS migration audit without interactive prompts (e.g. AEM → Contentful)
 npx test-auditor --path /Users/you/Documents/my-next-app --cms-from aem --cms-to contentful --no-open
+```
+
+### Upload audit reports to the backend
+
+After each audit, test-auditor writes a JSON report alongside the Markdown report (for example `audit-report.json` when `-o ./audit-report.md`).
+
+When a **project API key** is configured, the JSON report is uploaded automatically to your backend API. The upload payload matches the backend contract:
+
+```json
+{
+  "reportId": "<uuid>",
+  "generatedAt": "<ISO-8601 timestamp>",
+  "reportJson": { "...full local audit-report.json contents..." },
+  "pipeline": { "...optional CI metadata when detected..." }
+}
+```
+
+The API key is still sent only via the `x-api-key` header. Each API key belongs to exactly one project — the backend derives `projectId` and `clientId` from the key, so you do not pass those IDs from the CLI.
+
+**Recommended (environment variables, CI/CD friendly):**
+
+```bash
+TEST_AUDITOR_API_URL=https://api.example.com/api/reports \
+TEST_AUDITOR_API_KEY=<PROJECT_API_KEY> \
+npx test-auditor --path .
+```
+
+**CLI flags (override environment variables):**
+
+```bash
+npx test-auditor \
+  --path . \
+  --api-url https://api.example.com/api/reports \
+  --api-key <PROJECT_API_KEY>
+```
+
+**Configuration precedence:**
+
+```text
+CLI flag  →  environment variable  →  project config file  →  default
+```
+
+Optional project config files (in the audited project directory):
+
+- `.test-auditor.json`
+- `test-auditor.config.json`
+
+Example `.test-auditor.json`:
+
+```json
+{
+  "apiUrl": "https://api.example.com/api/reports",
+  "apiKey": "<PROJECT_API_KEY>",
+  "apiTimeout": 300000,
+  "upload": true
+}
+```
+
+**Important:**
+
+- The API key is sent only in the `x-api-key` HTTP header — configure it in `.test-auditor.json`.
+- Add `.test-auditor.json` to `.gitignore` when it contains secrets.
+- Upload is skipped when no API key is configured (audit still completes).
+- Use `--upload` to require upload; use `--no-upload` to disable upload even when a key is set.
+- Large reports (~50 MB) are streamed from the JSON file to minimize memory usage.
+- If upload fails, the local JSON and Markdown reports are still preserved.
+
+**Local development:**
+
+```bash
+TEST_AUDITOR_API_URL=http://localhost:3000/api/reports \
+TEST_AUDITOR_API_KEY=<PROJECT_API_KEY> \
+npx test-auditor --path . --no-open
 ```
 
 On an interactive terminal, after discovery the CLI asks for **Current CMS** and **New CMS** (unless `--no-cms` or flags are set). Findings appear in a separate **CMS Migration** report section and viewer hero — they do **not** change the Quality Score.
@@ -338,7 +521,8 @@ npm run viewer
 1. Discovers test files under `--path`
 2. Runs static analysis (e.g. missing assertions, skipped tests)
 3. Runs Jest with coverage (unless `--skip-run`)
-4. Writes a Markdown report (`audit-report.md` by default)
+4. Writes a Markdown report (`audit-report.md` by default) and a JSON report (`.json` alongside the Markdown file)
+5. Uploads the JSON report when a project API key is configured (unless `--no-upload`)
 
 Console styling:
 

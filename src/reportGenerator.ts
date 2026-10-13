@@ -178,3 +178,7 @@ export function generateMarkdownReport(report: AuditReport, outputPath: string) 
 
   fs.writeFileSync(outputPath, md, 'utf-8');
 }
+
+export function writeJsonReport(report: AuditReport, outputPath: string): void {
+  fs.writeFileSync(outputPath, JSON.stringify(report), 'utf-8');
+}

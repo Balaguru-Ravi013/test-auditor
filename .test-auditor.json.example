@@ -1,0 +1,11 @@
+{
+  "apiUrl": "https://api.example.com/api/reports",
+  "apiKey": "<PROJECT_API_KEY>",
+  "cmsReadiness": false,
+  "schedule": {
+    "enabled": false,
+    "frequency": "daily",
+    "time": "09:00",
+    "timezone": "UTC"
+  }
+}

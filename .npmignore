@@ -1,0 +1,13 @@
+# Source and development files (package ships dist/ via package.json "files")
+src/
+test/
+docs/
+*.tsbuildinfo
+.env
+.env.local
+.git/
+.github/
+*.tgz
+audit-report.md
+audit-report.json
+roadmap-BMA.pdf

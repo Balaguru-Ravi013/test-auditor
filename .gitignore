@@ -6,3 +6,10 @@ src/**/*.js
 src/**/*.d.ts
 src/**/*.js.map
 src/**/*.d.ts.map
+.env
+.env.local
+.test-auditor.json
+test-auditor.config.json
+audit-report.md
+audit-report.json
+*.tgz

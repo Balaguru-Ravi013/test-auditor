@@ -6,17 +6,20 @@ import { discoverTestFiles } from './discovery.js';
 import { analyzeFile } from './staticAnalyzer.js';
 import { runJestTests } from './testRunner.js';
 import { parseCoverage } from './coverageParser.js';
-import { generateMarkdownReport } from './reportGenerator.js';
+import { generateMarkdownReport, writeJsonReport } from './reportGenerator.js';
 import type { CmsMigrationReport, CompletenessAuditReport } from './reportGenerator.js';
 import { openReportViewer } from './viewerServer.js';
 import { computeQualityScore } from './qualityScore.js';
-import { loadCmsRegistry, resolveCmsPair } from './cmsRegistry.js';
-import { promptCmsMigration } from './cmsPrompt.js';
-import { analyzeCmsMigration } from './cmsMigrationAnalyzer.js';
-import { computeCmsReadiness } from './cmsReadinessScore.js';
+import { loadCmsRegistry } from './cmsRegistry.js';
+import { resolveCmsAuditPlan } from './cmsSelection.js';
+import { buildCmsMigrationReport } from './cmsAudit.js';
 import { discoverSourceFiles } from './sourceDiscovery.js';
 import { analyzeCompleteness } from './completenessAnalyzer.js';
 import { computeCompletenessScore } from './completenessScore.js';
+import { bootstrapProjectConfiguration } from './configBootstrap.js';
+import { resolveUploadConfig, getMissingApiKeyMessage, readConfigFile } from './testAuditorConfig.js';
+import { uploadReportFromFile } from './reportUploader.js';
+import { runInitCommand } from './initCommand.js';
 
 /**
  * Keys (labels) stay neutral bold.
@@ -58,24 +61,64 @@ function renderJestProgress(pct: number, completed: number, total: number) {
   process.stdout.write(`\r${line}${''.padEnd(8)}`);
 }
 
+function deriveJsonOutputPath(markdownPath: string): string {
+  if (markdownPath.endsWith('.md')) {
+    return `${markdownPath.slice(0, -3)}.json`;
+  }
+  return `${markdownPath}.json`;
+}
+
 const program = new Command();
 
+program.name('jest-test-auditor').description('Audit Jest test suites in any Next.js (or JS/TS) project');
+
 program
-  .name('jest-test-auditor')
-  .description('Audit Jest test suites in any Next.js (or JS/TS) project')
+  .command('init')
+  .description('Create .test-auditor.json and configure this project for npm run audit')
+  .action(async () => {
+    try {
+      await runInitCommand(process.cwd());
+    } catch (err) {
+      console.error(chalk.red(`Init failed: ${(err as Error).message}`));
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('audit', { isDefault: true })
+  .description('Run a Jest test audit')
   .requiredOption('-p, --path <path>', 'Path to the target project')
   .option('-o, --output <path>', 'Output report path', './audit-report.md')
   .option('--skip-run', 'Skip actually running Jest (static analysis only)')
   .option('--no-open', 'Do not open the interactive report viewer after audit')
-  .option('--no-cms', 'Skip CMS migration prompts and analysis')
-  .option('--cms-from <id>', 'Source CMS id (non-interactive; requires --cms-to)')
-  .option('--cms-to <id>', 'Target CMS id (non-interactive; requires --cms-from)')
+  .option('--no-cms', 'Skip CMS readiness check')
+  .option('--cms-readiness', 'Include CMS readiness check (overrides .test-auditor.json)')
+  .option('--cms-from <id>', 'CMS currently used (non-interactive migration; requires --cms-to)')
+  .option('--cms-to <id>', 'CMS being adopted (non-interactive migration; requires --cms-from)')
   .option('--cms-config <path>', 'Optional CMS registry JSON to merge/override built-in catalog')
   .option('--no-completeness', 'Skip source↔test gap / completeness analysis')
+  .option('--json-output <path>', 'JSON report path for upload and local archive')
+  .option('--upload', 'Upload the JSON report to the configured backend API')
+  .option('--no-upload', 'Skip report upload even when API credentials are configured')
+  .option('--api-key <key>', 'Project API key (sent via x-api-key header)')
+  .option('--api-url <url>', 'Report upload API URL')
+  .option('--api-timeout <ms>', 'Report upload timeout in milliseconds')
   .action(async (options) => {
     const projectPath = path.resolve(options.path);
+    const bootstrapped = bootstrapProjectConfiguration(process.cwd());
+
     printHeader();
-    // Path is context (not success/danger) — bold only
+    if (bootstrapped.configFilePath) {
+      printStep(
+        'Configuration',
+        `${green('found')} ${dim(bootstrapped.configFilePath)}`
+      );
+    } else {
+      printStep(
+        'Configuration',
+        `${yellow('no .test-auditor.json found')} ${dim('(using env/defaults; run `test-auditor init`)')}`
+      );
+    }
     printStep('Project', chalk.bold(projectPath));
 
     // 1. Discover test files
@@ -85,10 +128,18 @@ program
       `${yellow(files.length)} ${dim('test files')}`
     );
 
-    // 1b. CMS migration selection (opt-in)
+    // 1b. CMS readiness (opt-in)
     let cmsMigration: CmsMigrationReport | undefined;
-    const skipCms = options.cms === false; // commander --no-cms → cms: false
-    const hasCmsFlags = Boolean(options.cmsFrom || options.cmsTo);
+    const skipCms = options.cms === false;
+    const fileConfig = bootstrapped.configFilePath
+      ? readConfigFile(bootstrapped.configFilePath)
+      : {};
+    const cmsReadinessPreference =
+      options.cmsReadiness === true
+        ? true
+        : skipCms
+          ? false
+          : fileConfig.cmsReadiness;
 
     if (!skipCms) {
       try {
@@ -96,32 +147,37 @@ program
           options.cmsConfig ? path.resolve(options.cmsConfig) : undefined
         );
 
-        let pair: { from: ReturnType<typeof resolveCmsPair>['from']; to: ReturnType<typeof resolveCmsPair>['to'] } | null =
-          null;
+        const plan = await resolveCmsAuditPlan({
+          projectPath,
+          registry,
+          ...(options.cmsFrom ? { cmsFrom: options.cmsFrom } : {}),
+          ...(options.cmsTo ? { cmsTo: options.cmsTo } : {}),
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+          ...(cmsReadinessPreference !== undefined
+            ? { configCmsReadiness: cmsReadinessPreference }
+            : {}),
+        });
 
-        if (options.cmsFrom && options.cmsTo) {
-          pair = resolveCmsPair(registry, options.cmsFrom, options.cmsTo);
-        } else if (hasCmsFlags) {
-          throw new Error('Both --cms-from and --cms-to are required together');
-        } else if (process.stdin.isTTY && process.stdout.isTTY) {
-          pair = await promptCmsMigration(registry);
-        }
+        if (plan) {
+          if (plan.mode === 'migration' && plan.migration) {
+            printStep(
+              'CMS check',
+              `${chalk.bold(plan.migration.from.displayName)} ${dim(`(${plan.migration.from.id})`)} → ${chalk.bold(plan.migration.to.displayName)} ${dim(`(${plan.migration.to.id})`)}`
+            );
+          } else if (plan.checkCms.length === 1) {
+            printStep(
+              'CMS check',
+              `${chalk.bold(plan.checkCms[0]!.displayName)} ${dim(`(${plan.checkCms[0]!.id})`)} ${dim('· detected from package.json')}`
+            );
+          } else {
+            printStep(
+              'CMS check',
+              plan.checkCms.map((c) => chalk.bold(c.displayName)).join(', ')
+            );
+          }
 
-        if (pair) {
-          printStep(
-            'CMS migration',
-            `${chalk.bold(pair.from.displayName)} ${dim(`(${pair.from.id})`)} → ${chalk.bold(pair.to.displayName)} ${dim(`(${pair.to.id})`)}`
-          );
-
-          const cmsIssues = analyzeCmsMigration(files, pair.from, pair.to);
-          const readiness = computeCmsReadiness(
-            files.length,
-            cmsIssues,
-            pair.from,
-            pair.to
-          );
-          cmsMigration = { readiness, issues: cmsIssues };
-
+          cmsMigration = buildCmsMigrationReport(plan, files);
+          const { readiness } = cmsMigration;
           const legacyN = readiness.stats.legacyIssues;
           const readinessColor =
             readiness.grade === 'A' || readiness.grade === 'B'
@@ -131,13 +187,11 @@ program
                 : red;
           printStep(
             'CMS readiness',
-            `${readinessColor(`${readiness.grade} · ${readiness.score}/100`)} ${dim(`· ${legacyN} legacy finding(s)`)}`
+            `${readinessColor(`${readiness.grade} · ${readiness.score}/100`)} ${dim(`· ${legacyN} finding(s)`)}`
           );
         }
       } catch (err) {
-        console.log(
-          `  ${red('CMS migration setup failed:')} ${dim((err as Error).message)}`
-        );
+        console.log(`  ${red('CMS readiness setup failed:')} ${dim((err as Error).message)}`);
         console.log();
         process.exitCode = 1;
         return;
@@ -242,19 +296,69 @@ program
     );
 
     const outputPath = path.resolve(options.output);
-    generateMarkdownReport(
-      {
-        staticIssues,
-        runSummary,
-        coverage,
-        quality,
-        ...(cmsMigration ? { cmsMigration } : {}),
-        ...(testCompleteness ? { testCompleteness } : {}),
-      },
-      outputPath
+    const jsonOutputPath = path.resolve(
+      options.jsonOutput ?? deriveJsonOutputPath(outputPath)
     );
+    const auditReport = {
+      staticIssues,
+      runSummary,
+      coverage,
+      quality,
+      ...(cmsMigration ? { cmsMigration } : {}),
+      ...(testCompleteness ? { testCompleteness } : {}),
+    };
 
-    printStep('Report', green(outputPath));
+    generateMarkdownReport(auditReport, outputPath);
+    writeJsonReport(auditReport, jsonOutputPath);
+
+    printStep('Report', `${green('generated')} ${dim(`${outputPath} · ${jsonOutputPath}`)}`);
+
+    const uploadPreference =
+      options.upload === true ? true : options.noUpload === true ? false : fileConfig.upload;
+    const uploadConfig = resolveUploadConfig({
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      ...(options.apiUrl ? { apiUrl: options.apiUrl } : {}),
+      ...(options.apiTimeout ? { apiTimeout: Number(options.apiTimeout) } : {}),
+      ...(uploadPreference !== undefined ? { upload: uploadPreference } : {}),
+      ...(bootstrapped.configFilePath ? { configFilePath: bootstrapped.configFilePath } : {}),
+    });
+
+    if (uploadConfig.uploadEnabled) {
+      if (!uploadConfig.apiKey) {
+        console.log(`  ${red('✗ Report upload failed')}`);
+        console.log(`  ${dim(getMissingApiKeyMessage())}`);
+        console.log(`  ${dim('The audit report is still available locally.')}`);
+        console.log();
+      } else {
+        console.log(`  ${key('Uploading report')}...`);
+        const uploadResult = await uploadReportFromFile(
+          {
+            apiUrl: uploadConfig.apiUrl,
+            apiKey: uploadConfig.apiKey,
+            timeout: uploadConfig.apiTimeout,
+          },
+          jsonOutputPath
+        );
+
+        if (uploadResult.success) {
+          console.log(`  ${green('✓ Report uploaded successfully')}`);
+          if (uploadResult.reportId) {
+            console.log(`  ${dim('Report ID:')} ${chalk.bold(uploadResult.reportId)}`);
+          }
+          if (uploadResult.projectName) {
+            console.log(`  ${dim('Project:')} ${chalk.bold(uploadResult.projectName)}`);
+          } else if (uploadResult.projectId) {
+            console.log(`  ${dim('Project ID:')} ${chalk.bold(uploadResult.projectId)}`);
+          }
+          console.log();
+        } else {
+          console.log(`  ${red('✗ Report upload failed')}`);
+          console.log(`  ${dim('Reason:')} ${uploadResult.message}`);
+          console.log(`  ${dim('The audit report is still available locally.')}`);
+          console.log();
+        }
+      }
+    }
 
     if (options.open !== false) {
       printStep(

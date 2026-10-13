@@ -1,0 +1,7 @@
+{
+  "apiUrl": "https://file.example.com/api/reports",
+  "apiKey": "utc_file_key",
+  "apiTimeout": 240000,
+  "upload": true,
+  "cmsReadiness": true
+}
